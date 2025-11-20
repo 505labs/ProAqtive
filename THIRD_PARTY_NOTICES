@@ -33,7 +33,7 @@ License: /LICENSES/Aqua-Source-1.1.txt
 
 Component: @1inch/swap-vm
 Repo: https://github.com/1inch/swap-vm
-Version: 0.0.3
+Version: 0.0.4
 License: LicenseRef-Degensoft-SwapVM-1.1
 Copyright: © 2025 Degensoft Ltd
 License: /LICENSES/SwapVM-1.1.txt

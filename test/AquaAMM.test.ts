@@ -96,15 +96,6 @@ describe("AquaAMM", function () {
         deadline
       );
 
-      // Build taker traits data
-      const takerData = TakerTraitsLib.build({
-        taker: await mockTaker.getAddress(),
-        isExactIn: true,
-        threshold: ether("15"),
-        hasPreTransferInCallback: true,
-        preTransferInCallbackData: "0x" // Empty callback data
-      });
-
       // Ship liquidity to Aqua
       const token0Liquidity = ether("100");
       const token1Liquidity = ether("200");
@@ -121,6 +112,15 @@ describe("AquaAMM", function () {
         [await token0.getAddress(), await token1.getAddress()],
         [token0Liquidity, token1Liquidity]
       );
+
+      // Build taker traits data
+      const takerData = TakerTraitsLib.build({
+        taker: await mockTaker.getAddress(),
+        isExactIn: true,
+        threshold: ether("15"),
+        hasPreTransferInCallback: true,
+        preTransferInCallbackData: "0x" // Empty callback data
+      });
 
       const amountIn = ether("50");
 
