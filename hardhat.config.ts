@@ -26,6 +26,9 @@ const config: HardhatUserConfig = {
       default: 0, // here this will by default take the first account as deployer
     },
   },
+  sourcify: {
+    enabled: true
+  },
   solidity: {
     compilers: [
       {
@@ -60,12 +63,9 @@ const config: HardhatUserConfig = {
     outDir: "typechain-types",
   },
   etherscan: {
-    apiKey: {
-      // Add your Etherscan API keys here
-      mainnet: process.env.ETHERSCAN_API_KEY || "",
-      sepolia: process.env.ETHERSCAN_API_KEY || "",
-      // Add other networks as needed
-    }
+    // Etherscan API v2 - single unified API key for all networks
+    // Get your API key from https://etherscan.io/myapikey
+    apiKey: process.env.ETHERSCAN_API_KEY || "",
   }
 };
 

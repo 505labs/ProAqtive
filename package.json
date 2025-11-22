@@ -10,6 +10,11 @@
     "test": "npm run precompile && hardhat test",
     "deploy": "hardhat deploy --network",
     "deploy:localhost": "hardhat deploy --network localhost",
+    "deploy:proaquative": "hardhat deploy --tags ProAquativeAMM --network",
+    "deploy:proaquative:localhost": "hardhat deploy --tags ProAquativeAMM --network localhost",
+    "script": "hardhat run --network",
+    "script:sepolia": "hardhat run --network sepolia",
+    "script:localhost": "hardhat run --network localhost",
     "clean": "rimraf artifacts cache coverage contracts/hardhat-dependency-compiler deployments typechain-types"
   },
   "dependencies": {

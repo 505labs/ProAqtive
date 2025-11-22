@@ -209,7 +209,7 @@ describe("AquaAMM", function () {
       );
     });
 
-    it.only("should not swap tokens after deadline", async function () {
+    it("should not swap tokens after deadline", async function () {
       const {
         accounts: { maker, taker },
         tokens: { token0, token1 },
