@@ -1,16 +1,27 @@
 // SPDX-License-Identifier: LicenseRef-Degensoft-SwapVM-1.1
 
 import { ethers } from "hardhat";
-import { deployments } from "hardhat-deploy";
 import { ether } from "@1inch/solidity-utils";
+import "hardhat-deploy";
 
 /**
  * Get deployed contract address from hardhat-deploy
  */
 export async function getDeployedAddress(contractName: string, network?: string): Promise<string> {
-    const networkName = network || (await ethers.provider.getNetwork()).name;
-    const deployment = await deployments.get(contractName, { networkName });
-    return deployment.address;
+    const hre = await import("hardhat");
+    const deployments = (hre as any).deployments;
+
+    if (!deployments) {
+        return "";
+    }
+
+    try {
+        const deployment = await deployments.get(contractName);
+        return deployment.address;
+    } catch (error) {
+        // Contract not deployed yet
+        return "";
+    }
 }
 
 /**

@@ -19,6 +19,12 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20";
 import * as fs from "fs";
 import * as path from "path";
 
+
+const DEFAULT_TOKEN0_ADDRESS = "0x6105E77Cd7942c4386C01d1F0B9DD7876141c549";  // Mock ETH
+const DEFAULT_TOKEN1_ADDRESS = "0x5aA57352bF243230Ce55dFDa70ba9c3A253432f6";  // Mock USDC
+// const DEFAULT_AMOUNT0 = "100";
+// const DEFAULT_AMOUNT1 = "200";
+
 async function main() {
     console.log("=== Shipping Liquidity to Aqua ===\n");
 
@@ -33,8 +39,8 @@ async function main() {
     const proAquativeAMM = await getDeployedContract<ProAquativeAMM>("ProAquativeAMM");
 
     // Get token addresses from environment or use defaults
-    const token0Address = process.env.TOKEN0 || process.env.TOKEN0_ADDRESS;
-    const token1Address = process.env.TOKEN1 || process.env.TOKEN1_ADDRESS;
+    const token0Address = process.env.TOKEN0 || DEFAULT_TOKEN0_ADDRESS;
+    const token1Address = process.env.TOKEN1 || DEFAULT_TOKEN1_ADDRESS;
 
     if (!token0Address || !token1Address) {
         throw new Error("TOKEN0 and TOKEN1 environment variables are required");

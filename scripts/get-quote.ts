@@ -11,7 +11,11 @@ import { ethers } from "hardhat";
 import { getDeployedContract, formatTokenAmount, parseTokenAmount } from "./utils/helpers";
 import { CustomSwapVMRouter } from "../typechain-types/contracts/CustomSwapVMRouter";
 import { ProAquativeAMM } from "../typechain-types/contracts/ProAquativeAMM";
+import { TakerTraitsLib } from "../test/utils/SwapVMHelpers";
 import * as fs from "fs";
+
+const DEFAULT_TOKEN0_ADDRESS = "0x6105E77Cd7942c4386C01d1F0B9DD7876141c549";  // Mock ETH
+const DEFAULT_TOKEN1_ADDRESS = "0x5aA57352bF243230Ce55dFDa70ba9c3A253432f6";  // Mock USDC
 
 async function main() {
     console.log("=== Getting Swap Quote ===\n");
@@ -26,8 +30,8 @@ async function main() {
     const proAquativeAMM = await getDeployedContract<ProAquativeAMM>("ProAquativeAMM");
 
     // Get token addresses
-    const tokenInAddress = process.env.TOKEN_IN || process.env.TOKEN_IN_ADDRESS;
-    const tokenOutAddress = process.env.TOKEN_OUT || process.env.TOKEN_OUT_ADDRESS;
+    const tokenInAddress = process.env.TOKEN_IN || DEFAULT_TOKEN0_ADDRESS;
+    const tokenOutAddress = process.env.TOKEN_OUT || DEFAULT_TOKEN1_ADDRESS;
 
     if (!tokenInAddress || !tokenOutAddress) {
         throw new Error("TOKEN_IN and TOKEN_OUT environment variables are required");
@@ -85,22 +89,40 @@ async function main() {
 
     const orderStruct = { maker: order.maker, traits: order.traits, data: order.data };
 
+    // Build taker data
+    const threshold = process.env.THRESHOLD ? BigInt(process.env.THRESHOLD) : 0n;
+    const takerData = TakerTraitsLib.build({
+        taker: takerAddress,
+        isExactIn: isExactIn,
+        threshold: threshold,
+        useTransferFromAndAquaPush: true
+    });
+
     // Get quote
     console.log("\n📊 Getting quote...");
     try {
-        const quote = await swapVM.quote(
+        // quote returns (uint256 amountIn, uint256 amountOut, bytes32 orderHash)
+        // Use staticCall for view functions in ethers v6
+        const quoteResult = await swapVM.quote.staticCall(
             orderStruct,
             tokenInAddress,
             tokenOutAddress,
-            amountIn
+            amountIn,
+            takerData
         );
+
+        // Destructure the tuple result
+        const amountInResult: bigint = quoteResult[0];
+        const amountOut: bigint = quoteResult[1];
+        const orderHash: string = quoteResult[2];
 
         console.log("\n✅ Quote received!");
         console.log(`   Input: ${formatTokenAmount(amountIn)}`);
-        console.log(`   Output: ${formatTokenAmount(quote)}`);
+        console.log(`   Output: ${formatTokenAmount(amountOut)}`);
+        console.log(`   Order Hash: ${orderHash}`);
 
         if (amountIn > 0n) {
-            const rate = (Number(quote) / Number(amountIn)).toFixed(6);
+            const rate = (Number(amountOut) / Number(amountIn)).toFixed(6);
             console.log(`   Exchange Rate: 1 TokenIn = ${rate} TokenOut`);
         }
     } catch (error: any) {

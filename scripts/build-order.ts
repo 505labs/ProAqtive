@@ -26,7 +26,7 @@ async function main() {
     const proAquativeAMM = await getDeployedContract<ProAquativeAMM>("ProAquativeAMM");
 
     // Configuration (can be overridden via environment variables)
-    const pythOracle = process.env.PYTH_ORACLE || "0x0000000000000000000000000000000000000000"; // Replace with actual Pyth oracle
+    const pythOracle = process.env.PYTH_ORACLE || "0x6ac8CE4fBd739EC9253eeEd263b2C2D61C633732"; // Replace with actual Pyth oracle
     const priceId = process.env.PRICE_ID || ethers.id("TEST_PRICE_ID");
     const k = process.env.K ? BigInt(process.env.K) : 500000000000000000n; // 0.5 (50%)
     const maxStaleness = process.env.MAX_STALENESS ? BigInt(process.env.MAX_STALENESS) : 3600n; // 1 hour
