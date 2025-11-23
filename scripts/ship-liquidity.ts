@@ -151,7 +151,7 @@ async function main() {
         }
 
         const priceId = process.env.PRICE_ID || ethers.id("TEST_PRICE_ID");
-        const k = process.env.K ? BigInt(process.env.K) : 500000000000000000n;
+        const k = process.env.K ? BigInt(process.env.K) : 400000000000000000n;
         const maxStaleness = process.env.MAX_STALENESS ? BigInt(process.env.MAX_STALENESS) : 3600n;
         const isTokenInBase = process.env.IS_TOKEN_IN_BASE !== "false";
         const baseDecimals = parseInt(process.env.BASE_DECIMALS || "18");
