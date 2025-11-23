@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 pragma solidity 0.8.30;
 
-import { Context, ContextLib } from "./libs/VM.sol";
-import { DecimalMath } from "./libs/DecimalMath.sol";
-import { DODOMath } from "./libs/DODOMath.sol";
-import { Types } from "./libs/Types.sol";
-import { IPriceOracle } from "./interfaces/IPriceOracle.sol";
+import { Context, ContextLib } from "@1inch/swap-vm/src/libs/VM.sol";
+import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
+import { DecimalMath } from "./contracts/libs/DecimalMath.sol";
+import { DODOMath } from "./contracts/libs/DODOMath.sol";
+import { Types } from "./contracts/libs/Types.sol";
+import { IPriceOracle } from "./contracts/interfaces/IPriceOracle.sol";
 
 /// @title DODOSwap
 /// @notice DODO Proactive Market Maker (PMM) algorithm compatible with SwapVM
@@ -28,13 +29,40 @@ contract DODOSwap {
     /// @param k Liquidity depth parameter (0 to 1e18, where 0 = constant sum, 1e18 = constant product)
     /// @param targetBaseAmount Target base token balance (equilibrium point)
     /// @param targetQuoteAmount Target quote token balance (equilibrium point)
-    /// @param rStatus Current R status (ONE, ABOVE_ONE, or BELOW_ONE)
+    /// @param baseIsTokenIn True if base token is the input token, false if quote token is input
     struct DODOParams {
         address oracle;
         uint256 k;
         uint256 targetBaseAmount;
         uint256 targetQuoteAmount;
-        Types.RStatus rStatus;
+        bool baseIsTokenIn;
+    }
+
+    // ============ R Status Derivation ============
+
+    /// @notice Derive R status from current base and quote supplies
+    /// @dev Based on PMM Price Curve:
+    ///      - If B < B₀, then R < 1 (BELOW_ONE)
+    ///      - If Q < Q₀, then R > 1 (ABOVE_ONE)
+    ///      - Otherwise, R = 1 (ONE)
+    /// @param baseBalance Current base token supply
+    /// @param quoteBalance Current quote token supply
+    /// @param targetBaseAmount Equilibrium base token supply (B₀)
+    /// @param targetQuoteAmount Equilibrium quote token supply (Q₀)
+    /// @return The derived R status
+    function _getRStatus(
+        uint256 baseBalance,
+        uint256 quoteBalance,
+        uint256 targetBaseAmount,
+        uint256 targetQuoteAmount
+    ) internal pure returns (Types.RStatus) {
+        if (baseBalance < targetBaseAmount) {
+            return Types.RStatus.BELOW_ONE;
+        } else if (quoteBalance < targetQuoteAmount) {
+            return Types.RStatus.ABOVE_ONE;
+        } else {
+            return Types.RStatus.ONE;
+        }
     }
 
     // ============ Main Swap Function ============
@@ -59,6 +87,26 @@ contract DODOSwap {
         // Get oracle price
         uint256 oraclePrice = IPriceOracle(params.oracle).getPrice();
 
+        // Determine base and quote balances based on swap direction
+        uint256 baseBalance;
+        uint256 quoteBalance;
+        
+        if (params.baseIsTokenIn) {
+            baseBalance = ctx.swap.balanceIn;
+            quoteBalance = ctx.swap.balanceOut;
+        } else {
+            baseBalance = ctx.swap.balanceOut;
+            quoteBalance = ctx.swap.balanceIn;
+        }
+
+        // Derive R status from current balances
+        Types.RStatus rStatus = _getRStatus(
+            baseBalance,
+            quoteBalance,
+            params.targetBaseAmount,
+            params.targetQuoteAmount
+        );
+
         // Execute swap based on direction
         if (ctx.query.isExactIn) {
             // Prevent recomputation
@@ -71,7 +119,7 @@ contract DODOSwap {
                 ctx.swap.balanceOut,
                 params.targetBaseAmount,
                 params.targetQuoteAmount,
-                params.rStatus,
+                rStatus,
                 oraclePrice,
                 params.k
             );
@@ -86,7 +134,7 @@ contract DODOSwap {
                 ctx.swap.balanceOut,
                 params.targetBaseAmount,
                 params.targetQuoteAmount,
-                params.rStatus,
+                rStatus,
                 oraclePrice,
                 params.k
             );
