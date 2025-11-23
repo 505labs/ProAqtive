@@ -115,7 +115,47 @@ ORDER_FILE=order.json TOKEN_IN=0x... TOKEN_OUT=0x... AMOUNT_IN=10 npx hardhat ru
 - `MAKER_ADDRESS` - (Optional) Maker address if building new order
 - All order parameters (same as build-order.ts)
 
-### 6. `full-workflow-example.ts` - Complete Workflow
+### 6. `dock-liquidity.ts` - Dock (Close) Liquidity
+
+Close a liquidity strategy in Aqua. This marks the strategy as inactive but tokens remain in Aqua.
+
+```bash
+# Dock liquidity (requires the same order used when shipping)
+ORDER_FILE=order.json TOKEN0=0x... TOKEN1=0x... npx hardhat run scripts/dock-liquidity.ts --network sepolia
+```
+
+**Environment Variables:**
+- `ORDER_FILE` - JSON file with order data (required - must match the order used when shipping)
+- `TOKEN0` or `TOKEN0_ADDRESS` - First token address
+- `TOKEN1` or `TOKEN1_ADDRESS` - Second token address
+
+**Important Notes:**
+- You must be the maker of the order (same address that shipped liquidity)
+- Docking marks the strategy as closed - it cannot be used for new swaps
+- Tokens remain in Aqua after docking - use `pull-liquidity.ts` to check balances
+- You can only dock once per order hash
+
+### 7. `pull-liquidity.ts` - Check Pullable Balances
+
+Check available balances in a docked strategy. Note: Aqua's `pull()` function is designed for the SwapVM router to use during swaps, not for direct withdrawal by makers.
+
+```bash
+# Check balances in a docked strategy
+ORDER_FILE=order.json TOKEN0=0x... TOKEN1=0x... npx hardhat run scripts/pull-liquidity.ts --network sepolia
+```
+
+**Environment Variables:**
+- `ORDER_FILE` - JSON file with order data
+- `TOKEN0` or `TOKEN0_ADDRESS` - First token address
+- `TOKEN1` or `TOKEN1_ADDRESS` - Second token address
+
+**Important Notes:**
+- This script checks balances but doesn't actually withdraw tokens
+- Aqua's `pull()` is called by SwapVM during swaps, not directly by makers
+- After docking, tokens remain in Aqua but the strategy is inactive
+- To withdraw tokens, you may need to use them in a swap or check for withdrawal functions
+
+### 8. `full-workflow-example.ts` - Complete Workflow
 
 Run the complete workflow: build order → ship liquidity → get quote → execute swap.
 
@@ -169,6 +209,16 @@ TOKEN_OUT=0xYourToken1 \
 AMOUNT_IN=10 \
 ORDER_FILE=order.json \
 npx hardhat run scripts/execute-swap.ts --network sepolia
+```
+
+### Step 5: Dock Liquidity (Optional)
+
+```bash
+# Close the liquidity strategy
+TOKEN0=0xYourToken0 \
+TOKEN1=0xYourToken1 \
+ORDER_FILE=order.json \
+npx hardhat run scripts/dock-liquidity.ts --network sepolia
 ```
 
 ## Saving and Loading Orders

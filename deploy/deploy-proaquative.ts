@@ -32,18 +32,27 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
     }
 
     // Deploy CustomSwapVMRouter (uses MyCustomOpcodes with ProAquativeMM instruction)
-    const customSwapVMRouterDeploy = await deploy('CustomSwapVMRouter', {
-        from: deployer,
-        args: [
-            aquaAddress,
-            'CustomSwapVM',
-            '1.0.0'
-        ],
-        log: true,
-        waitConfirmations: 1,
-    });
-
-    console.log(`CustomSwapVMRouter deployed at: ${customSwapVMRouterDeploy.address}`);
+    // Only deploy if it doesn't already exist
+    let customSwapVMRouterAddress: string;
+    const existingCustomSwapVMRouter = await deployments.getOrNull('CustomSwapVMRouter');
+    if (existingCustomSwapVMRouter) {
+        customSwapVMRouterAddress = existingCustomSwapVMRouter.address;
+        console.log(`Using existing CustomSwapVMRouter at: ${customSwapVMRouterAddress}`);
+    } else {
+        console.log('CustomSwapVMRouter not found, deploying...');
+        const customSwapVMRouterDeploy = await deploy('CustomSwapVMRouter', {
+            from: deployer,
+            args: [
+                aquaAddress,
+                'CustomSwapVM',
+                '1.0.0'
+            ],
+            log: true,
+            waitConfirmations: 1,
+        });
+        customSwapVMRouterAddress = customSwapVMRouterDeploy.address;
+        console.log(`CustomSwapVMRouter deployed at: ${customSwapVMRouterAddress}`);
+    }
 
     // Deploy ProAquativeAMM
     const proAquativeAMMDeploy = await deploy('ProAquativeAMM', {
@@ -77,7 +86,7 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
 
     console.log('\n=== ProAquativeAMM Deployment Summary ===');
     console.log(`Aqua: ${aquaAddress}`);
-    console.log(`CustomSwapVMRouter: ${customSwapVMRouterDeploy.address}`);
+    console.log(`CustomSwapVMRouter: ${customSwapVMRouterAddress}`);
     console.log(`ProAquativeAMM: ${proAquativeAMMDeploy.address}`);
     // console.log(`FixedPriceAMM: ${fixedPriceAMMDeploy.address}`);
     // console.log(`SimpleConstantProductAMM: ${simpleConstantProductAMMDeploy.address}`);
@@ -92,7 +101,7 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
 
         try {
             await hre.run('verify:verify', {
-                address: customSwapVMRouterDeploy.address,
+                address: customSwapVMRouterAddress,
                 constructorArguments: [
                     aquaAddress,
                     'CustomSwapVM',

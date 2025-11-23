@@ -12,14 +12,18 @@ export async function getDeployedAddress(contractName: string, network?: string)
     const deployments = (hre as any).deployments;
 
     if (!deployments) {
+        console.log(`   ⚠️  deployments not available in getDeployedAddress`);
         return "";
     }
 
     try {
+        // Get current network if not provided
+        const currentNetwork = network || (await ethers.provider.getNetwork()).name;
         const deployment = await deployments.get(contractName);
         return deployment.address;
-    } catch (error) {
+    } catch (error: any) {
         // Contract not deployed yet
+        console.log(`   ⚠️  Could not find deployment for ${contractName}: ${error.message || error}`);
         return "";
     }
 }
