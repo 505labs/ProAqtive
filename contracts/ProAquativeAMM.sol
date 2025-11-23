@@ -28,10 +28,28 @@ import { ProAquativeMMArgsBuilder } from "./instructions/ProAqtivSwap.sol";
 contract ProAquativeAMM is MyCustomOpcodes {
     using ProgramBuilder for Program;
 
+    /**
+     * @notice Hook configuration struct for buildProgram
+     */
+    struct HookConfig {
+        bool hasPreTransferInHook;
+        bool hasPostTransferInHook;
+        bool hasPreTransferOutHook;
+        bool hasPostTransferOutHook;
+        address preTransferInTarget;
+        address postTransferInTarget;
+        address preTransferOutTarget;
+        address postTransferOutTarget;
+        bytes preTransferInData;
+        bytes postTransferInData;
+        bytes preTransferOutData;
+        bytes postTransferOutData;
+    }
+
     constructor(address aqua) MyCustomOpcodes(aqua) {}
     
     /**
-     * @notice Builds a ProAquativeMM order
+     * @notice Builds a ProAquativeMM order (without hooks)
      * @param maker The address providing liquidity
      * @param pythOracle Address of the Pyth oracle contract
      * @param priceId The Pyth price feed ID (bytes32)
@@ -52,6 +70,56 @@ contract ProAquativeAMM is MyCustomOpcodes {
         uint8 baseDecimals,
         uint8 quoteDecimals
     ) external pure returns (ISwapVM.Order memory) {
+        return buildProgram(
+            maker,
+            pythOracle,
+            priceId,
+            k,
+            maxStaleness,
+            isTokenInBase,
+            baseDecimals,
+            quoteDecimals,
+            HookConfig({
+                hasPreTransferInHook: false,
+                hasPostTransferInHook: false,
+                hasPreTransferOutHook: false,
+                hasPostTransferOutHook: false,
+                preTransferInTarget: address(0),
+                postTransferInTarget: address(0),
+                preTransferOutTarget: address(0),
+                postTransferOutTarget: address(0),
+                preTransferInData: "",
+                postTransferInData: "",
+                preTransferOutData: "",
+                postTransferOutData: ""
+            })
+        );
+    }
+    
+    /**
+     * @notice Builds a ProAquativeMM order with hook configuration
+     * @param maker The address providing liquidity
+     * @param pythOracle Address of the Pyth oracle contract
+     * @param priceId The Pyth price feed ID (bytes32)
+     * @param k The k parameter (0-1e18, where 1e18 = 100%). Higher k = more liquidity depth impact
+     * @param maxStaleness Maximum age of price in seconds
+     * @param isTokenInBase Whether tokenIn is the base token (true) or quote token (false)
+     * @param baseDecimals Decimals of the base token
+     * @param quoteDecimals Decimals of the quote token
+     * @param hookConfig Hook configuration for pre/post transfer hooks
+     * @return order The SwapVM order with the ProAquativeMM swap program
+     */
+    function buildProgram(
+        address maker,
+        address pythOracle,
+        bytes32 priceId,
+        uint64 k,
+        uint64 maxStaleness,
+        bool isTokenInBase,
+        uint8 baseDecimals,
+        uint8 quoteDecimals,
+        HookConfig memory hookConfig
+    ) public pure returns (ISwapVM.Order memory) {
         // Initialize program builder with our extended opcodes
         Program memory program = ProgramBuilder.init(_opcodes());
         
@@ -76,18 +144,18 @@ contract ProAquativeAMM is MyCustomOpcodes {
             useAquaInsteadOfSignature: true,
             allowZeroAmountIn: false,
             receiver: address(0),
-            hasPreTransferInHook: false,
-            hasPostTransferInHook: false,
-            hasPreTransferOutHook: false,
-            hasPostTransferOutHook: false,
-            preTransferInTarget: address(0),
-            preTransferInData: "",
-            postTransferInTarget: address(0),
-            postTransferInData: "",
-            preTransferOutTarget: address(0),
-            preTransferOutData: "",
-            postTransferOutTarget: address(0),
-            postTransferOutData: "",
+            hasPreTransferInHook: hookConfig.hasPreTransferInHook,
+            hasPostTransferInHook: hookConfig.hasPostTransferInHook,
+            hasPreTransferOutHook: hookConfig.hasPreTransferOutHook,
+            hasPostTransferOutHook: hookConfig.hasPostTransferOutHook,
+            preTransferInTarget: hookConfig.preTransferInTarget,
+            preTransferInData: hookConfig.preTransferInData,
+            postTransferInTarget: hookConfig.postTransferInTarget,
+            postTransferInData: hookConfig.postTransferInData,
+            preTransferOutTarget: hookConfig.preTransferOutTarget,
+            preTransferOutData: hookConfig.preTransferOutData,
+            postTransferOutTarget: hookConfig.postTransferOutTarget,
+            postTransferOutData: hookConfig.postTransferOutData,
             program: bytecode
         }));
     }
