@@ -50,7 +50,22 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
     console.log('═══════════════════════════════════════════════════════════');
     console.log('Deploying All Components for SmartYieldVault');
     console.log('═══════════════════════════════════════════════════════════\n');
+
+    // Display network information for debugging
+    const network = await ethers.provider.getNetwork();
+    const networkConfig = hre.network.config as any;
+    console.log(`Network: ${hre.network.name}`);
+    console.log(`Chain ID: ${network.chainId.toString()}`);
+    if (networkConfig.url) {
+        console.log(`RPC URL: ${networkConfig.url}`);
+    }
     console.log(`Deployer account: ${deployer}\n`);
+
+    // Verify we're on the correct network
+    if (hre.network.name === 'arbitrumSepolia' && network.chainId !== 421614n) {
+        console.error(`⚠️  WARNING: Network name is 'arbitrumSepolia' but Chain ID is ${network.chainId.toString()}, expected 421614`);
+        console.error(`   This might indicate the RPC URL is pointing to the wrong network!`);
+    }
 
     // Check if force redeploy flag is set
     const forceRedeploy = process.env.FORCE_REDEPLOY === 'true' || process.env.FORCE_REDEPLOY === '1';
@@ -387,7 +402,8 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
         console.log('Waiting for block confirmations before verification...');
         await new Promise((resolve) => setTimeout(resolve, 30000)); // Wait 30 seconds
 
-        console.log('Verifying contracts on Etherscan...\n');
+        const explorerName = hre.network.name === 'arbitrumSepolia' ? 'Arbiscan' : 'Etherscan';
+        console.log(`Verifying contracts on ${explorerName}...\n`);
 
         // Verify CustomSwapVMRouter
         try {

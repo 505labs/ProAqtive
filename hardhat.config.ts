@@ -19,6 +19,11 @@ const config: HardhatUserConfig = {
       url: process.env.SEPOLIA_RPC_URL || "",
       accounts: process.env.PRIVATE_KEY ? ["0x" + process.env.PRIVATE_KEY] : [],
     },
+    arbitrumSepolia: {
+      url: process.env.ARBITRUM_SEPOLIA_RPC_URL || "https://sepolia-rollup.arbitrum.io/rpc",
+      accounts: process.env.PRIVATE_KEY ? ["0x" + process.env.PRIVATE_KEY] : [],
+      chainId: 421614,
+    },
     // Add your deployment network here and the corresponding URL in the .env file
   },
   namedAccounts: {
@@ -66,6 +71,16 @@ const config: HardhatUserConfig = {
     // Etherscan API v2 - single unified API key for all networks
     // Get your API key from https://etherscan.io/myapikey
     apiKey: process.env.ETHERSCAN_API_KEY || "",
+    customChains: [
+      {
+        network: "arbitrumSepolia",
+        chainId: 421614,
+        urls: {
+          apiURL: "https://api-sepolia.arbiscan.io/api",
+          browserURL: "https://sepolia.arbiscan.io"
+        }
+      }
+    ]
   }
 };
 
