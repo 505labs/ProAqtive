@@ -26,7 +26,8 @@
     "@1inch/swap-vm": "https://github.com/1inch/swap-vm#0.0.4",
     "@openzeppelin/contracts": "^5.4.0",
     "@pythnetwork/hermes-client": "^2.1.0",
-    "@pythnetwork/pyth-sdk-solidity": "^4.3.1"
+    "@pythnetwork/pyth-sdk-solidity": "^4.3.1",
+    "axios": "^1.6.0"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-chai-matchers": "^2.0.0",
