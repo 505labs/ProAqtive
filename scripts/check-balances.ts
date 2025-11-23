@@ -9,7 +9,6 @@
 
 import { ethers } from "hardhat";
 import { getDeployedAddress, displayBalance } from "./utils/helpers";
-import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20";
 
 async function main() {
     console.log("=== Checking Balances and Addresses ===\n");
@@ -21,6 +20,9 @@ async function main() {
 
     // Get deployed contract addresses
     console.log("Deployed Contract Addresses:");
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+
+    // Core Aqua contracts
     try {
         const aqua = await getDeployedAddress("Aqua");
         console.log(`  Aqua: ${aqua}`);
@@ -29,25 +31,82 @@ async function main() {
     }
 
     try {
+        const aquaAMM = await getDeployedAddress("AquaAMM");
+        console.log(`  AquaAMM: ${aquaAMM}`);
+    } catch (e) {
+        console.log("  AquaAMM: Not deployed");
+    }
+
+    try {
+        const aquaSwapVMRouter = await getDeployedAddress("AquaSwapVMRouter");
+        console.log(`  AquaSwapVMRouter: ${aquaSwapVMRouter}`);
+    } catch (e) {
+        console.log("  AquaSwapVMRouter: Not deployed");
+    }
+
+    // Custom SwapVM Router
+    try {
         const customSwapVM = await getDeployedAddress("CustomSwapVMRouter");
         console.log(`  CustomSwapVMRouter: ${customSwapVM}`);
     } catch (e) {
         console.log("  CustomSwapVMRouter: Not deployed");
     }
 
+    // AMM Contracts
     try {
         const proAquativeAMM = await getDeployedAddress("ProAquativeAMM");
-        console.log(`  ProAquativeAMM: ${proAquativeAMM || "Not deployed"}`);
+        console.log(`  ProAquativeAMM: ${proAquativeAMM}`);
     } catch (e) {
         console.log("  ProAquativeAMM: Not deployed");
     }
 
     try {
-        const mockPyth = await getDeployedAddress("MockPyth");
-        console.log(`  MockPyth: ${mockPyth || "Not deployed"}`);
+        const fixedPriceAMM = await getDeployedAddress("FixedPriceAMM");
+        console.log(`  FixedPriceAMM: ${fixedPriceAMM}`);
     } catch (e) {
-        console.log("  MockPyth: Not deployed");
+        console.log("  FixedPriceAMM: Not deployed");
     }
+
+    try {
+        const simpleConstantProductAMM = await getDeployedAddress("SimpleConstantProductAMM");
+        console.log(`  SimpleConstantProductAMM: ${simpleConstantProductAMM}`);
+    } catch (e) {
+        console.log("  SimpleConstantProductAMM: Not deployed");
+    }
+
+    // Oracle
+    try {
+        const mockPyth = await getDeployedAddress("MockPyth");
+        console.log(`  MockPyth (Oracle): ${mockPyth}`);
+    } catch (e) {
+        console.log("  MockPyth (Oracle): Not deployed");
+    }
+
+    // Vault
+    try {
+        const smartYieldVault = await getDeployedAddress("SmartYieldVault");
+        console.log(`  SmartYieldVault: ${smartYieldVault}`);
+    } catch (e) {
+        console.log("  SmartYieldVault: Not deployed");
+    }
+
+    // Aave Pool (Mock or Real)
+    try {
+        const mockAavePool = await getDeployedAddress("MockAavePool");
+        console.log(`  MockAavePool: ${mockAavePool}`);
+    } catch (e) {
+        console.log("  MockAavePool: Not deployed");
+    }
+
+    // Test/Mock Contracts
+    try {
+        const mockTaker = await getDeployedAddress("MockTaker");
+        console.log(`  MockTaker: ${mockTaker}`);
+    } catch (e) {
+        console.log("  MockTaker: Not deployed");
+    }
+
+    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
     // Check token balances if provided
     const token0Address = process.env.TOKEN0 || process.env.TOKEN0_ADDRESS;

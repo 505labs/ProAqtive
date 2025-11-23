@@ -20,6 +20,8 @@
     "deploy:smart-yield-vault:localhost": "hardhat deploy --tags SmartYieldVault --network localhost",
     "deploy:mock-aave": "hardhat deploy --tags MockAavePool --network",
     "deploy:mock-aave:localhost": "hardhat deploy --tags MockAavePool --network localhost",
+    "deploy:all": "hardhat deploy --tags DeployAll --network",
+    "deploy:all:localhost": "hardhat deploy --tags DeployAll --network localhost",
     "script": "hardhat run --network",
     "script:sepolia": "hardhat run --network sepolia",
     "script:localhost": "hardhat run --network localhost",
