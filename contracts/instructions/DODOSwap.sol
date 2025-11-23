@@ -107,14 +107,19 @@ contract DODOSwap {
         // Formula: price = pythPrice.price * 10^(18 + pythPrice.expo)
         uint256 oraclePrice = _convertPythPrice(pythPrice);
 
-        // Determine base and quote balances based on swap direction
+        // Determine base and quote balances
+        // baseIsTokenIn determines which token is base:
+        //   - true: base is tokenIn (balanceIn), quote is tokenOut (balanceOut) - for SELLING base
+        //   - false: base is tokenOut (balanceOut), quote is tokenIn (balanceIn) - for BUYING base
         uint256 baseBalance;
         uint256 quoteBalance;
         
         if (params.baseIsTokenIn) {
+            // Selling base for quote (e.g., ETH → USDC)
             baseBalance = ctx.swap.balanceIn;
             quoteBalance = ctx.swap.balanceOut;
         } else {
+            // Buying base with quote (e.g., USDC → ETH)
             baseBalance = ctx.swap.balanceOut;
             quoteBalance = ctx.swap.balanceIn;
         }
@@ -134,7 +139,7 @@ contract DODOSwap {
                 revert DODOSwapRecomputeDetected();
             }
             
-            // Calculate amountOut based on R status
+            // Calculate amountOut based on R status and swap direction
             ctx.swap.amountOut = _calculateAmountOut(
                 ctx.swap.amountIn,
                 ctx.swap.balanceIn,
@@ -143,7 +148,8 @@ contract DODOSwap {
                 params.targetQuoteAmount,
                 rStatus,
                 oraclePrice,
-                params.k
+                params.k,
+                params.baseIsTokenIn  // true = selling base, false = buying base
             );
         } else {
             // Prevent recomputation
@@ -151,7 +157,7 @@ contract DODOSwap {
                 revert DODOSwapRecomputeDetected();
             }
             
-            // Calculate amountIn based on R status
+            // Calculate amountIn based on R status and swap direction
             ctx.swap.amountIn = _calculateAmountIn(
                 ctx.swap.amountOut,
                 ctx.swap.balanceIn,
@@ -160,7 +166,8 @@ contract DODOSwap {
                 params.targetQuoteAmount,
                 rStatus,
                 oraclePrice,
-                params.k
+                params.k,
+                params.baseIsTokenIn  // true = selling base, false = buying base
             );
         }
     }
@@ -176,17 +183,31 @@ contract DODOSwap {
         uint256 targetQuoteAmount,
         Types.RStatus rStatus,
         uint256 oraclePrice,
-        uint256 k
+        uint256 k,
+        bool baseIsTokenIn  // True if selling base, false if buying base
     ) internal pure returns (uint256) {
-        if (rStatus == Types.RStatus.ONE) {
-            // Balanced state: selling base for quote
-            return _ROneSellBaseToken(amountIn, targetQuoteAmount, oraclePrice, k);
-        } else if (rStatus == Types.RStatus.BELOW_ONE) {
-            // Excess base: selling base for quote
-            return _RBelowSellBaseToken(amountIn, balanceOut, targetQuoteAmount, oraclePrice, k);
+        if (baseIsTokenIn) {
+            // Selling base for quote (ETH → USDC)
+            if (rStatus == Types.RStatus.ONE) {
+                return _ROneSellBaseToken(amountIn, targetQuoteAmount, oraclePrice, k);
+            } else if (rStatus == Types.RStatus.BELOW_ONE) {
+                return _RBelowSellBaseToken(amountIn, balanceOut, targetQuoteAmount, oraclePrice, k);
+            } else {
+                return _RAboveSellBaseToken(amountIn, balanceIn, targetBaseAmount, oraclePrice, k);
+            }
         } else {
-            // Excess quote: selling base for quote (buying back to equilibrium)
-            return _RAboveSellBaseToken(amountIn, balanceIn, targetBaseAmount, oraclePrice, k);
+            // Buying base with quote (USDC → ETH) - treat as "selling quote for base"
+            // When buying base: amountIn is quote, we want base out
+            if (rStatus == Types.RStatus.ONE) {
+                // R = 1: Calculate how much base we get for quote input
+                return _ROneBuyBaseTokenFromQuote(amountIn, targetBaseAmount, targetQuoteAmount, oraclePrice, k);
+            } else if (rStatus == Types.RStatus.BELOW_ONE) {
+                // R < 1 (excess base): Buying base moves toward equilibrium
+                return _RBelowBuyBaseTokenFromQuote(amountIn, balanceIn, balanceOut, targetBaseAmount, targetQuoteAmount, oraclePrice, k);
+            } else {
+                // R > 1 (excess quote): Buying base moves away from equilibrium
+                return _RAboveBuyBaseTokenFromQuote(amountIn, balanceIn, targetBaseAmount, oraclePrice, k);
+            }
         }
     }
 
@@ -199,17 +220,32 @@ contract DODOSwap {
         uint256 targetQuoteAmount,
         Types.RStatus rStatus,
         uint256 oraclePrice,
-        uint256 k
+        uint256 k,
+        bool baseIsTokenIn  // True if base is input (selling base), false if quote is input (buying base)
     ) internal pure returns (uint256) {
-        if (rStatus == Types.RStatus.ONE) {
-            // Balanced state: buying base with quote
-            return _ROneBuyBaseToken(amountOut, targetBaseAmount, oraclePrice, k);
-        } else if (rStatus == Types.RStatus.BELOW_ONE) {
-            // Excess base: buying base with quote (buying back to equilibrium)
-            return _RBelowBuyBaseToken(amountOut, balanceOut, targetQuoteAmount, oraclePrice, k);
+        if (baseIsTokenIn) {
+            // Selling base for exact quote output (ETH → USDC)
+            // amountOut is quote, need to calculate base input
+            // This is less common, but needs to be handled
+            // For now, revert - this case isn't implemented
+            revert("Exact quote output not implemented");
         } else {
-            // Excess quote: buying base with quote
-            return _RAboveBuyBaseToken(amountOut, balanceIn, targetBaseAmount, oraclePrice, k);
+            // Buying exact base output with quote input (USDC → ETH)
+            // amountOut is base, need to calculate quote input
+            // balanceIn is QUOTE balance, balanceOut is BASE balance
+            if (rStatus == Types.RStatus.ONE) {
+                return _ROneBuyBaseToken(amountOut, targetBaseAmount, oraclePrice, k);
+            } else if (rStatus == Types.RStatus.BELOW_ONE) {
+                // R < 1: excess base, deficit quote
+                // Buying base moves toward equilibrium
+                // Pass QUOTE balance (balanceIn), not base balance!
+                return _RBelowBuyBaseToken(amountOut, balanceIn, targetQuoteAmount, oraclePrice, k);
+            } else {
+                // R > 1: excess quote, deficit base
+                // Buying base moves away from equilibrium
+                // Pass BASE balance (balanceOut)
+                return _RAboveBuyBaseToken(amountOut, balanceOut, targetBaseAmount, oraclePrice, k);
+            }
         }
     }
 
@@ -311,6 +347,78 @@ contract DODOSwap {
     ) internal pure returns (uint256 receiveQuoteToken) {
         uint256 B1 = baseBalance + amount;
         return _RAboveIntegrate(targetBaseAmount, B1, baseBalance, i, k);
+    }
+
+    // ============ Buying Base with Quote (Exact Quote Input) ============
+
+    /// @notice Buy base with exact quote input when R = ONE
+    function _ROneBuyBaseTokenFromQuote(
+        uint256 quoteAmount,
+        uint256 targetBaseAmount,
+        uint256 targetQuoteAmount,
+        uint256 i,
+        uint256 k
+    ) internal pure returns (uint256 receiveBaseToken) {
+        // When R = 1 and we input exact quote, calculate base output
+        // Using the inverse calculation of selling base
+        uint256 B2 = DODOMath._SolveQuadraticFunctionForTrade(
+            targetBaseAmount,
+            targetBaseAmount,
+            quoteAmount,
+            true,
+            k
+        );
+        return targetBaseAmount - B2;
+    }
+
+    /// @notice Buy base with exact quote input when R < ONE (excess base)
+    function _RBelowBuyBaseTokenFromQuote(
+        uint256 quoteAmount,
+        uint256 quoteBalance,
+        uint256 baseBalance,
+        uint256 targetBaseAmount,
+        uint256 targetQuoteAmount,
+        uint256 i,
+        uint256 k
+    ) internal pure returns (uint256 receiveBaseToken) {
+        // R < 1 means excess base, deficit quote
+        // Adding quote moves toward equilibrium
+        uint256 Q2 = quoteBalance + quoteAmount;
+        
+        // Solve for how base balance changes
+        uint256 B2 = DODOMath._SolveQuadraticFunctionForTrade(
+            targetBaseAmount,
+            baseBalance,
+            DecimalMath.mul(i, quoteAmount),
+            true,
+            k
+        );
+        
+        return baseBalance - B2;
+    }
+
+    /// @notice Buy base with exact quote input when R > ONE (excess quote)
+    function _RAboveBuyBaseTokenFromQuote(
+        uint256 quoteAmount,
+        uint256 quoteBalance,
+        uint256 targetBaseAmount,
+        uint256 i,
+        uint256 k
+    ) internal pure returns (uint256 receiveBaseToken) {
+        // R > 1 means excess quote, deficit base
+        // Buying base with more quote moves further from equilibrium
+        uint256 Q1 = quoteBalance + quoteAmount;
+        
+        // Use quadratic solver to find base output
+        uint256 B2 = DODOMath._SolveQuadraticFunctionForTrade(
+            targetBaseAmount,
+            targetBaseAmount,
+            quoteAmount,
+            true,
+            k
+        );
+        
+        return targetBaseAmount - B2;
     }
 
     // ============ Helper Functions ============
