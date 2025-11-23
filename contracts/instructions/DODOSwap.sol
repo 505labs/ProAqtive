@@ -80,8 +80,8 @@ contract DODOSwap {
         // Decode parameters
         DODOParams memory params = abi.decode(args, (DODOParams));
         
-        // Validate k parameter
-        if (params.k > DecimalMath.ONE) {
+        // Validate k parameter (k must be in range [0, 1) - k = 1 causes division by zero)
+        if (params.k >= DecimalMath.ONE) {
             revert DODOSwapInvalidKParameter(params.k);
         }
 

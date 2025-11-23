@@ -37,7 +37,7 @@ contract FixedPriceAMM is MyCustomOpcodes {
         Program memory program = ProgramBuilder.init(_opcodes());
         
         // Build bytecode using our custom instruction
-        // This will encode opcode 0x1D (29) with no arguments
+        // This will encode opcode 0x1C (28) with no arguments
         bytes memory bytecode = program.build(_fixedPriceSwapXD);
         
         // Build and return the order

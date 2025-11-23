@@ -24,14 +24,14 @@ contract MyCustomOpcodes is AquaOpcodes, FixedPriceSwap, DODOSwap {
      * @return result Array of instruction functions, including our custom ones
      * 
      * The array index becomes the opcode number:
-     * - Index 0-28: Original AquaOpcodes instructions
-     * - Index 29: FixedPriceSwap._fixedPriceSwapXD (opcode 0x1D)
-     * - Index 30: DODOSwap._dodoSwapXD (opcode 0x1E)
+     * - Index 0-27: Original AquaOpcodes instructions (28 total)
+     * - Index 28: FixedPriceSwap._fixedPriceSwapXD (opcode 0x1C)
+     * - Index 29: DODOSwap._dodoSwapXD (opcode 0x1D)
      */
     function _opcodes() internal pure override returns (
         function(Context memory, bytes calldata) internal[] memory result
     ) {
-        // Get parent opcodes (29 instructions from AquaOpcodes)
+        // Get parent opcodes (28 instructions from AquaOpcodes)
         function(Context memory, bytes calldata) internal[] memory parent = super._opcodes();
         
         // Create new array with two more slots for our custom instructions
@@ -44,8 +44,8 @@ contract MyCustomOpcodes is AquaOpcodes, FixedPriceSwap, DODOSwap {
         }
         
         // Add our custom instructions at the end
-        instructions[parent.length] = FixedPriceSwap._fixedPriceSwapXD;      // opcode 0x1D = 29
-        instructions[parent.length + 1] = DODOSwap._dodoSwapXD; // opcode 0x1E = 30
+        instructions[parent.length] = FixedPriceSwap._fixedPriceSwapXD;      // opcode 0x1C = 28
+        instructions[parent.length + 1] = DODOSwap._dodoSwapXD; // opcode 0x1D = 29
         
         return instructions;
     }

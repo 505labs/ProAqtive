@@ -40,7 +40,7 @@ interface DODOSwapFixtureResult {
 }
 
 describe("DODOSwap", function () {
-  const DODO_SWAP_OPCODE = 0x1E; // Index 30 in MyCustomOpcodes
+  const DODO_SWAP_OPCODE = 0x1D; // Index 29 in MyCustomOpcodes
 
   async function setupDODOFixture(): Promise<DODOSwapFixtureResult> {
     const {
@@ -555,7 +555,7 @@ describe("DODOSwap", function () {
       ).to.not.be.reverted;
     });
 
-    it("should work with k = 1 (constant product behavior)", async function () {
+    it("should revert with k = 1 (division by zero edge case)", async function () {
       const {
         accounts: { maker },
         tokens: { token0, token1 },
@@ -577,7 +577,7 @@ describe("DODOSwap", function () {
         targetBaseAmount,
         targetQuoteAmount,
         mockOracle,
-        ether("1"), // k = 1
+        ether("1"), // k = 1 (invalid - causes division by zero in formula)
         true
       );
 
@@ -601,6 +601,67 @@ describe("DODOSwap", function () {
         targetQuoteAmount,
         mockOracle,
         ether("1"),
+        true
+      );
+
+      // k = 1 should be rejected as invalid parameter
+      await expect(
+        mockTaker.swap(
+          orderStruct,
+          await token0.getAddress(),
+          await token1.getAddress(),
+          amountIn,
+          takerData
+        )
+      ).to.be.revertedWithCustomError(customOpcodes, "DODOSwapInvalidKParameter");
+    });
+
+    it("should work with k = 0.99 (high liquidity depth)", async function () {
+      const {
+        accounts: { maker },
+        tokens: { token0, token1 },
+        contracts: { aqua, customOpcodes, swapVM, mockTaker, mockOracle }
+      } = await loadFixture(setupDODOFixture);
+
+      await mockOracle.setPrice(ether("1"));
+
+      const targetBaseAmount = ether("1000");
+      const targetQuoteAmount = ether("1000");
+
+      await setupDODOOrder(
+        aqua,
+        swapVM,
+        customOpcodes,
+        maker,
+        token0,
+        token1,
+        targetBaseAmount,
+        targetQuoteAmount,
+        mockOracle,
+        ether("0.99"), // k = 0.99 (very high liquidity depth, close to constant product)
+        true
+      );
+
+      const amountIn = ether("100");
+      const minAmountOut = ether("80");
+
+      const takerData = TakerTraitsLib.build({
+        taker: await mockTaker.getAddress(),
+        isExactIn: true,
+        threshold: minAmountOut,
+        hasPreTransferInCallback: true,
+        preTransferInCallbackData: "0x"
+      });
+
+      const orderStruct = await buildDODOOrderStruct(
+        maker,
+        token0,
+        token1,
+        customOpcodes,
+        targetBaseAmount,
+        targetQuoteAmount,
+        mockOracle,
+        ether("0.99"),
         true
       );
 
@@ -919,7 +980,7 @@ async function buildDODOOrderStruct(
   k: any,
   baseIsTokenIn: boolean
 ) {
-  const DODO_SWAP_OPCODE = 0x1E;
+  const DODO_SWAP_OPCODE = 0x1D;
 
   // Encode DODOParams
   const dodoParams = ethers.AbiCoder.defaultAbiCoder().encode(
