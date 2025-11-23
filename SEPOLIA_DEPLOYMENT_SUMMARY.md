@@ -40,9 +40,9 @@ All contracts have been successfully deployed to Sepolia testnet with DODOSwap f
   - Standard router (not used for DODOSwap)
   - Etherscan: https://sepolia.etherscan.io/address/0x5C20B012c443A595D0bC5c5B8a93e9fD122521eB
 
-- **MockTaker**: `0x771E1676439C89652B4F90601fedFBa5311b5c92`
-  - Testing helper contract
-  - Etherscan: https://sepolia.etherscan.io/address/0x771E1676439C89652B4F90601fedFBa5311b5c92
+- **MockTaker**: `0x4651355BEDf5dE4343CD7f413832244Fa51F0C06`
+  - Testing helper contract (redeployed with MyCustomOpcodes router)
+  - Etherscan: https://sepolia.etherscan.io/address/0x4651355BEDf5dE4343CD7f413832244Fa51F0C06
 
 ### Custom DODOSwap Router
 - **MyCustomOpcodes** (CustomSwapVMRouter): `0x3Fd87f63a331730dCbDd179eD07F923DB757a9C6`
