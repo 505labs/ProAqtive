@@ -41,9 +41,10 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
 
     console.log('Deploying MockPyth oracle with account:', deployer);
 
-    // Deploy MockPyth
+    // Deploy MockPyth (use fully qualified name to avoid conflict with @pythnetwork MockPyth)
     const mockPythDeploy = await deploy('MockPyth', {
         from: deployer,
+        contract: 'contracts/mocks/MockPyth.sol:MockPyth',
         args: [], // MockPyth has no constructor arguments
         log: true,
         waitConfirmations: 1,
@@ -65,7 +66,7 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
 
         console.log('\nSetting initial price...');
 
-        const mockPyth = await ethers.getContractAt('MockPyth', mockPythDeploy.address);
+        const mockPyth = await ethers.getContractAt('contracts/mocks/MockPyth.sol:MockPyth', mockPythDeploy.address);
 
         // Handle priceId: if it's hex, use directly, otherwise hash the string
         const priceId = priceIdRaw.startsWith('0x') ? priceIdRaw : ethers.id(priceIdRaw);

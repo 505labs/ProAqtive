@@ -6,7 +6,8 @@ import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { DecimalMath } from "../libs/DecimalMath.sol";
 import { DODOMath } from "../libs/DODOMath.sol";
 import { Types } from "../libs/Types.sol";
-import { IPriceOracle } from "../interfaces/IPriceOracle.sol";
+import { IPyth } from "@pythnetwork/pyth-sdk-solidity/IPyth.sol";
+import { PythStructs } from "@pythnetwork/pyth-sdk-solidity/PythStructs.sol";
 
 /// @title DODOSwap
 /// @notice DODO Proactive Market Maker (PMM) algorithm compatible with SwapVM
@@ -25,13 +26,18 @@ contract DODOSwap {
     // ============ Structs ============
 
     /// @notice Parameters passed via args for stateless operation
-    /// @param oracle Address of the price oracle contract
+    /// @param pythContract Address of the Pyth contract for oracle updates
+    /// @param priceFeedId Pyth price feed ID (e.g., ETH/USD feed ID)
+    /// @param maxStaleness Maximum acceptable price age in seconds (e.g., 60)
     /// @param k Liquidity depth parameter (0 to 1e18, where 0 = constant sum, 1e18 = constant product)
     /// @param targetBaseAmount Target base token balance (equilibrium point)
     /// @param targetQuoteAmount Target quote token balance (equilibrium point)
     /// @param baseIsTokenIn True if base token is the input token, false if quote token is input
+    /// @dev Price must be updated separately before calling swap (see updatePriceFeeds on IPyth)
     struct DODOParams {
-        address oracle;
+        address pythContract;
+        bytes32 priceFeedId;
+        uint256 maxStaleness;
         uint256 k;
         uint256 targetBaseAmount;
         uint256 targetQuoteAmount;
@@ -67,10 +73,11 @@ contract DODOSwap {
 
     // ============ Main Swap Function ============
 
-    /// @notice Execute DODO swap using PMM algorithm
+    /// @notice Execute DODO swap using PMM algorithm with Pyth oracle
     /// @dev Compatible with SwapVM architecture
+    /// @dev Price must be updated separately before calling swap (via pyth.updatePriceFeeds)
     /// @param ctx Swap context from SwapVM
-    /// @param args Encoded DODOParams
+    /// @param args Encoded DODOParams (without price update data)
     function _dodoSwapXD(Context memory ctx, bytes calldata args) internal view {
         // Validate balances
         if (!(ctx.swap.balanceIn > 0 && ctx.swap.balanceOut > 0)) {
@@ -85,8 +92,20 @@ contract DODOSwap {
             revert DODOSwapInvalidKParameter(params.k);
         }
 
-        // Get oracle price
-        uint256 oraclePrice = IPriceOracle(params.oracle).getPrice();
+        // Initialize Pyth interface
+        IPyth pyth = IPyth(params.pythContract);
+        
+        // Get the current price from Pyth (must be updated separately before swap)
+        // This will revert if the price is older than maxStaleness
+        PythStructs.Price memory pythPrice = pyth.getPriceNoOlderThan(
+            params.priceFeedId,
+            params.maxStaleness
+        );
+        
+        // Convert Pyth price to our format (18 decimals)
+        // Pyth price has 'expo' as the exponent (negative for most prices)
+        // Formula: price = pythPrice.price * 10^(18 + pythPrice.expo)
+        uint256 oraclePrice = _convertPythPrice(pythPrice);
 
         // Determine base and quote balances based on swap direction
         uint256 baseBalance;
@@ -305,6 +324,39 @@ contract DODOSwap {
         uint256 k
     ) internal pure returns (uint256) {
         return DODOMath._GeneralIntegrate(B0, B1, B2, i, k);
+    }
+
+    /// @notice Convert Pyth price format to 18 decimal format
+    /// @dev Pyth prices come with an exponent (usually negative)
+    /// @dev Formula: finalPrice = pythPrice.price * 10^(18 + pythPrice.expo)
+    /// @param pythPrice The price struct from Pyth
+    /// @return price The price scaled to 18 decimals
+    function _convertPythPrice(PythStructs.Price memory pythPrice) internal pure returns (uint256) {
+        // Pyth price format: price * 10^expo
+        // We need to convert to 18 decimals
+        // Example: If Pyth returns price=3000.50 as (300050, expo=-2)
+        // We need: 3000.50 * 10^18 = 300050 * 10^(18-2) = 300050 * 10^16
+        
+        int64 price = pythPrice.price;
+        int32 expo = pythPrice.expo;
+        
+        // Ensure price is positive (negative prices don't make sense for our use case)
+        require(price > 0, "DODOSwap: Negative price");
+        
+        uint256 absPrice = uint256(uint64(price));
+        
+        // Calculate the scaling factor: 10^(18 + expo)
+        // If expo = -8, we need 10^(18-8) = 10^10
+        // If expo = -2, we need 10^(18-2) = 10^16
+        int256 exponent = int256(18) + int256(expo);
+        
+        if (exponent >= 0) {
+            // Positive exponent: multiply
+            return absPrice * (10 ** uint256(exponent));
+        } else {
+            // Negative exponent: divide
+            return absPrice / (10 ** uint256(-exponent));
+        }
     }
 }
 
