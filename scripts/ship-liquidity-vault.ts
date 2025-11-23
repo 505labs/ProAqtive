@@ -82,8 +82,8 @@ async function main() {
     const token1 = await ethers.getContractAt("IERC20", token1Address) as any;
 
     // Get token amounts
-    const amount0 = parseTokenAmount(process.env.AMOUNT0 || "100", 6);
-    const amount1 = parseTokenAmount(process.env.AMOUNT1 || "200", 18);
+    const amount0 = parseTokenAmount(process.env.AMOUNT0 || "10", 6);
+    const amount1 = parseTokenAmount(process.env.AMOUNT1 || "20", 18);
 
     console.log("Configuration:");
     console.log(`  Vault: ${vaultAddress}`);
@@ -183,13 +183,27 @@ async function main() {
 
     console.log("  ✅ Pre-deposit complete - vault now has tokens in Aave for hook withdrawals");
 
-    // Update amounts for shipping (subtract what was pre-deposited)
-    const remainingAmount0 = amount0 - preDepositAmount0;
-    const remainingAmount1 = amount1 - preDepositAmount1;
+    // Check actual vault balance after pre-deposit (to ensure we have enough for shipping)
+    const vaultBalance0AfterPreDeposit = await token0.balanceOf(vaultAddress);
+    const vaultBalance1AfterPreDeposit = await token1.balanceOf(vaultAddress);
 
-    console.log(`\n  Remaining amounts for shipping to Aqua:`);
-    console.log(`    Token0: ${formatTokenAmount(remainingAmount0, 6)} (${formatTokenAmount(amount0, 6)} - ${formatTokenAmount(preDepositAmount0, 6)})`);
-    console.log(`    Token1: ${formatTokenAmount(remainingAmount1)} (${formatTokenAmount(amount1)} - ${formatTokenAmount(preDepositAmount1)})`);
+    console.log(`\n  Vault balances after pre-deposit:`);
+    console.log(`    Token0: ${formatTokenAmount(vaultBalance0AfterPreDeposit, 6)}`);
+    console.log(`    Token1: ${formatTokenAmount(vaultBalance1AfterPreDeposit)}`);
+
+    // Calculate remaining amounts for shipping (use actual balance, not calculated)
+    // We'll ship whatever is left in the vault after pre-deposit
+    const remainingAmount0 = vaultBalance0AfterPreDeposit;
+    const remainingAmount1 = vaultBalance1AfterPreDeposit;
+
+    console.log(`\n  Amounts to ship to Aqua (using actual vault balance):`);
+    console.log(`    Token0: ${formatTokenAmount(remainingAmount0, 6)}`);
+    console.log(`    Token1: ${formatTokenAmount(remainingAmount1)}`);
+
+    // Validate we have enough balance
+    if (remainingAmount0 === 0n && remainingAmount1 === 0n) {
+        throw new Error("Vault has no tokens left to ship to Aqua after pre-deposit. Reduce PRE_DEPOSIT_PERCENTAGE or increase amounts.");
+    }
 
     // Step 4: Build or load order
     console.log("\nStep 4: Building/loading order...");
@@ -297,8 +311,143 @@ async function main() {
     // Wait for any pending transactions before shipping
     await waitForPendingTransactions(userAddress, ethers.provider);
 
+    // Final validation before shipping
+    const finalVaultBalance0 = await token0.balanceOf(vaultAddress);
+    const finalVaultBalance1 = await token1.balanceOf(vaultAddress);
+
+    console.log(`\n  Final vault balances before shipping:`);
+    console.log(`    Token0: ${formatTokenAmount(finalVaultBalance0, 6)} (need: ${formatTokenAmount(remainingAmount0, 6)})`);
+    console.log(`    Token1: ${formatTokenAmount(finalVaultBalance1)} (need: ${formatTokenAmount(remainingAmount1)})`);
+
+    // Ensure vault has enough balance
+    if (finalVaultBalance0 < remainingAmount0) {
+        throw new Error(`Insufficient Token0 in vault: have ${formatTokenAmount(finalVaultBalance0, 6)}, need ${formatTokenAmount(remainingAmount0, 6)}`);
+    }
+    if (finalVaultBalance1 < remainingAmount1) {
+        throw new Error(`Insufficient Token1 in vault: have ${formatTokenAmount(finalVaultBalance1)}, need ${formatTokenAmount(remainingAmount1)}`);
+    }
+
+    // Check Aqua approval
+    const aquaAllowance0 = await token0.allowance(vaultAddress, aquaAddress);
+    const aquaAllowance1 = await token1.allowance(vaultAddress, aquaAddress);
+
+    console.log(`\n  Aqua allowances:`);
+    console.log(`    Token0: ${formatTokenAmount(aquaAllowance0, 6)} (need: ${formatTokenAmount(remainingAmount0, 6)})`);
+    console.log(`    Token1: ${formatTokenAmount(aquaAllowance1)} (need: ${formatTokenAmount(remainingAmount1)})`);
+
+    if (aquaAllowance0 < remainingAmount0) {
+        throw new Error(`Insufficient Token0 allowance for Aqua: have ${formatTokenAmount(aquaAllowance0, 6)}, need ${formatTokenAmount(remainingAmount0, 6)}`);
+    }
+    if (aquaAllowance1 < remainingAmount1) {
+        throw new Error(`Insufficient Token1 allowance for Aqua: have ${formatTokenAmount(aquaAllowance1)}, need ${formatTokenAmount(remainingAmount1)}`);
+    }
+
+    // Check if strategy hash already exists (Aqua doesn't allow duplicate orders)
+    console.log(`\n  Checking if order already exists in Aqua...`);
+    try {
+        const strategyHash = orderHash; // Use the order hash we calculated earlier
+        const DOCKED = 255; // _DOCKED constant from Aqua
+
+        // Check if tokens exist for this strategy hash
+        // rawBalances signature: (maker, app, strategyHash, token)
+        const [balance0, tokensCount0Raw] = await aqua.rawBalances(
+            vaultAddress,
+            swapVMAddress,
+            strategyHash,
+            token0Address
+        );
+        const [balance1, tokensCount1Raw] = await aqua.rawBalances(
+            vaultAddress,
+            swapVMAddress,
+            strategyHash,
+            token1Address
+        );
+
+        // Convert to numbers for comparison
+        const tokensCount0 = Number(tokensCount0Raw);
+        const tokensCount1 = Number(tokensCount1Raw);
+
+        const strategyExists = tokensCount0 > 0 || tokensCount1 > 0;
+        const isDocked = tokensCount0 === DOCKED || tokensCount1 === DOCKED;
+
+        if (strategyExists) {
+            if (isDocked) {
+                console.error(`\n   ⚠️  ERROR: Strategy hash was previously docked!`);
+            } else {
+                console.error(`\n   ⚠️  ERROR: Strategy hash already exists in Aqua!`);
+            }
+            console.error(`   ⚠️  Aqua does not allow shipping to the same order twice (StrategiesMustBeImmutable)!`);
+            console.error(`   Strategy Hash: ${strategyHash}`);
+            console.error(`\n   💡 Solutions:`);
+            console.error(`      1. Use different order parameters:`);
+            console.error(`         - Change K: K=600000000000000000 (different k value)`);
+            console.error(`         - Change PRICE_ID: PRICE_ID=0x... (different price feed)`);
+            console.error(`         - Change MAX_STALENESS: MAX_STALENESS=7200`);
+            console.error(`      2. Dock the existing liquidity first:`);
+            console.error(`         - Run: npx hardhat run scripts/dock-liquidity.ts --network sepolia`);
+            console.error(`\n   ❌ Aborting to prevent StrategiesMustBeImmutable error.`);
+            throw new Error("Strategy hash already exists. Aqua requires unique orders (StrategiesMustBeImmutable)");
+        } else {
+            console.log(`   ✅ Strategy hash not found - safe to ship`);
+        }
+    } catch (checkError: any) {
+        if (checkError.message && checkError.message.includes("StrategiesMustBeImmutable")) {
+            throw checkError; // Re-throw if it's our intentional error
+        }
+        // If rawBalances fails, it might mean the strategy doesn't exist (which is fine)
+        console.log(`   ⚠️  Could not check strategy existence: ${checkError.message}`);
+        console.log(`   💡 Proceeding anyway - if strategy exists, you'll get StrategiesMustBeImmutable error`);
+    }
+
     // Use the vault's shipLiquidity function (user is already verified as owner in Step 2)
     // Ship the remaining amounts (after pre-deposit to Aave)
+    console.log(`\n  Shipping to Aqua...`);
+
+    // Try to simulate the call first to get better error messages
+    try {
+        console.log(`  Simulating shipLiquidity call...`);
+        await vault.connect(user).shipLiquidity.staticCall(
+            aquaAddress,
+            swapVMAddress,
+            encodedOrder,
+            [token0Address, token1Address],
+            [remainingAmount0, remainingAmount1]
+        );
+        console.log(`  ✅ Simulation successful`);
+    } catch (simError: any) {
+        console.error(`  ❌ Simulation failed:`);
+        const simErrorMsg = simError.reason || simError.message || simError.toString() || "";
+        console.error(`     Error: ${simErrorMsg}`);
+
+        if (simError.data) {
+            console.error(`     Error Data: ${simError.data}`);
+        }
+
+        // Check for common issues
+        if (simErrorMsg.includes("StrategiesMustBeImmutable") || simErrorMsg.includes("strategy") || simErrorMsg.includes("immutable")) {
+            console.error(`\n  💡 ERROR: Order already exists in Aqua!`);
+            console.error(`     Aqua requires unique orders - you cannot ship the same order twice.`);
+            console.error(`     Solutions:`);
+            console.error(`     1. Dock existing liquidity first`);
+            console.error(`     2. Build a new order with different parameters`);
+        }
+        if (simErrorMsg.includes("insufficient") || simErrorMsg.includes("balance")) {
+            console.error(`\n  💡 Possible issue: Insufficient balance or allowance`);
+        }
+        if (simErrorMsg.includes("order") || simErrorMsg.includes("strategy")) {
+            console.error(`\n  💡 Possible issue: Order/strategy validation failed`);
+            console.error(`     - Verify the order was built with the correct vault address`);
+            console.error(`     - Check if order hash matches: ${orderHash}`);
+        }
+        if (simErrorMsg.includes("maker") || simErrorMsg.includes("address")) {
+            console.error(`\n  💡 Possible issue: Maker address mismatch`);
+            console.error(`     - Order maker: ${order.maker}`);
+            console.error(`     - Vault address: ${vaultAddress}`);
+        }
+
+        throw simError;
+    }
+
     const shipTx = await vault.connect(user).shipLiquidity(
         aquaAddress,
         swapVMAddress,
