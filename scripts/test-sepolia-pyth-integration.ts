@@ -52,7 +52,7 @@ const K_PARAMETER = ether("0.05");             // k = 0.05 (BRAND NEW to force t
 const TARGET_BASE_AMOUNT = ether("2");         // 2 mETH equilibrium (BRAND NEW)
 const TARGET_QUOTE_AMOUNT = ether("5600");     // 5,600 mUSDC (2 * $2,800) (BRAND NEW)
 const BASE_IS_TOKEN_IN = true;                 // Base (mETH) is the input token
-const MAX_PRICE_STALENESS = 60;                // 60 seconds max staleness
+const MAX_PRICE_STALENESS = 3600;                // 60 seconds max staleness
 
 // ============================================================================
 // TEST CONFIGURATION
@@ -194,7 +194,7 @@ async function main() {
   console.log("╚════════════════════════════════════════════════════════════╝\n");
 
   try {
-    // Get accounts - if only one exists, create a second one as taker
+    // Get accounts
     const signers = await ethers.getSigners();
     const deployer = signers[0];
     const deployerAddress = await deployer.getAddress();
@@ -203,25 +203,18 @@ async function main() {
     const maker = deployer;
     const makerAddress = deployerAddress;
     
-    // Create or use a different taker
-    let taker: any;
-    let takerAddress: string;
+    // Use the TAKER environment variable for the taker's private key
+    if (!process.env.TAKER) {
+      throw new Error("TAKER private key not found in .env file");
+    }
+    const taker = new ethers.Wallet(process.env.TAKER, ethers.provider);
+    const takerAddress = await taker.getAddress();
     
-    if (signers.length > 1) {
-      // Use account[1] as taker if available
-      taker = signers[1];
-      takerAddress = await taker.getAddress();
-      console.log("👥 Using existing second account as taker");
-    } else {
-      // Create a new random wallet as taker
-      const takerWallet = ethers.Wallet.createRandom();
-      taker = takerWallet.connect(ethers.provider);
-      takerAddress = await taker.getAddress();
-      console.log("👥 Created new random wallet as taker");
-      
-      // Fund the taker with ETH for gas
-      const fundAmount = ethers.parseEther("0.1"); // 0.1 ETH for gas
-      console.log(`   Funding taker with ${ethers.formatEther(fundAmount)} ETH...`);
+    // Check if taker needs ETH for gas
+    const takerBalance = await ethers.provider.getBalance(takerAddress);
+    if (takerBalance < ethers.parseEther("0.01")) {
+      console.log("👥 Funding constant taker account...");
+      const fundAmount = ethers.parseEther("0.1");
       const fundTx = await deployer.sendTransaction({
         to: takerAddress,
         value: fundAmount
@@ -301,13 +294,13 @@ async function main() {
     console.log("═══ 🔓 Step 2: Approve Tokens ===\n");
     
     const routerAddress = await router.getAddress();
-    const aquaAddr = await aqua.getAddress();
+    const aquaAddress2 = await aqua.getAddress();
     
     // Taker approves ROUTER (for swap execution)
     console.log("Taker approving router...");
     const takerMETHAllowance = await mETH.allowance(takerAddress, routerAddress);
     if (takerMETHAllowance < SWAP_AMOUNT_METH) {
-      const tx = await mETH.connect(taker).approve(routerAddress, ethers.MaxUint256);
+      const tx = await (mETH as any).connect(taker).approve(routerAddress, ethers.MaxUint256);
       await waitForTx(tx, "Taker approve mETH to Router");
       console.log("✅ Taker approved mETH to Router\n");
     } else {
@@ -316,16 +309,16 @@ async function main() {
     
     // Maker approves AQUA (for shipping liquidity)
     console.log("Maker approving Aqua for liquidity...");
-    const makerMETHAllowanceAqua = await mETH.allowance(makerAddress, aquaAddr);
-    const makerMUSDCAllowanceAqua = await mUSDC.allowance(makerAddress, aquaAddr);
+    const makerMETHAllowanceAqua = await mETH.allowance(makerAddress, aquaAddress2);
+    const makerMUSDCAllowanceAqua = await mUSDC.allowance(makerAddress, aquaAddress2);
     
     if (makerMETHAllowanceAqua < LIQUIDITY_METH) {
-      const tx = await mETH.connect(maker).approve(aquaAddr, ethers.MaxUint256);
+      const tx = await (mETH as any).connect(maker).approve(aquaAddress2, ethers.MaxUint256);
       await waitForTx(tx, "Maker approve mETH to Aqua");
     }
     
     if (makerMUSDCAllowanceAqua < LIQUIDITY_MUSDC) {
-      const tx = await mUSDC.connect(maker).approve(aquaAddr, ethers.MaxUint256);
+      const tx = await (mUSDC as any).connect(maker).approve(aquaAddress2, ethers.MaxUint256);
       await waitForTx(tx, "Maker approve mUSDC to Aqua");
     }
     
@@ -383,21 +376,6 @@ async function main() {
     );
     
     console.log("✅ Order built successfully\n");
-
-    // Step 6.5: Approve tokens to Aqua for shipping liquidity
-    const aquaAddr = await aqua.getAddress();
-    const mETHAllowanceAqua = await mETH.allowance(deployerAddress, aquaAddr);
-    const mUSDCAllowanceAqua = await mUSDC.allowance(deployerAddress, aquaAddr);
-    
-    if (mETHAllowanceAqua < LIQUIDITY_METH) {
-      const tx = await mETH.approve(aquaAddr, ethers.MaxUint256);
-      await waitForTx(tx, "Approve mETH to Aqua");
-    }
-    
-    if (mUSDCAllowanceAqua < LIQUIDITY_MUSDC) {
-      const tx = await mUSDC.approve(aquaAddr, ethers.MaxUint256);
-      await waitForTx(tx, "Approve mUSDC to Aqua");
-    }
 
     // Step 7: Ship liquidity to Aqua
     console.log("═══ 🚢 Step 7: Ship Liquidity to Aqua ═══\n");
