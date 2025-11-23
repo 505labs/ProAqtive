@@ -3,10 +3,10 @@ pragma solidity 0.8.30;
 
 import { Context, ContextLib } from "@1inch/swap-vm/src/libs/VM.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
-import { DecimalMath } from "./contracts/libs/DecimalMath.sol";
-import { DODOMath } from "./contracts/libs/DODOMath.sol";
-import { Types } from "./contracts/libs/Types.sol";
-import { IPriceOracle } from "./contracts/interfaces/IPriceOracle.sol";
+import { DecimalMath } from "../libs/DecimalMath.sol";
+import { DODOMath } from "../libs/DODOMath.sol";
+import { Types } from "../libs/Types.sol";
+import { IPriceOracle } from "../interfaces/IPriceOracle.sol";
 
 /// @title DODOSwap
 /// @notice DODO Proactive Market Maker (PMM) algorithm compatible with SwapVM
@@ -73,16 +73,17 @@ contract DODOSwap {
     /// @param args Encoded DODOParams
     function _dodoSwapXD(Context memory ctx, bytes calldata args) internal view {
         // Validate balances
-        require(
-            ctx.swap.balanceIn > 0 && ctx.swap.balanceOut > 0,
-            DODOSwapRequiresBothBalancesNonZero(ctx.swap.balanceIn, ctx.swap.balanceOut)
-        );
+        if (!(ctx.swap.balanceIn > 0 && ctx.swap.balanceOut > 0)) {
+            revert DODOSwapRequiresBothBalancesNonZero(ctx.swap.balanceIn, ctx.swap.balanceOut);
+        }
 
         // Decode parameters
         DODOParams memory params = abi.decode(args, (DODOParams));
         
         // Validate k parameter
-        require(params.k <= DecimalMath.ONE, DODOSwapInvalidKParameter(params.k));
+        if (params.k > DecimalMath.ONE) {
+            revert DODOSwapInvalidKParameter(params.k);
+        }
 
         // Get oracle price
         uint256 oraclePrice = IPriceOracle(params.oracle).getPrice();
@@ -110,7 +111,9 @@ contract DODOSwap {
         // Execute swap based on direction
         if (ctx.query.isExactIn) {
             // Prevent recomputation
-            require(ctx.swap.amountOut == 0, DODOSwapRecomputeDetected());
+            if (ctx.swap.amountOut != 0) {
+                revert DODOSwapRecomputeDetected();
+            }
             
             // Calculate amountOut based on R status
             ctx.swap.amountOut = _calculateAmountOut(
@@ -125,7 +128,9 @@ contract DODOSwap {
             );
         } else {
             // Prevent recomputation
-            require(ctx.swap.amountIn == 0, DODOSwapRecomputeDetected());
+            if (ctx.swap.amountIn != 0) {
+                revert DODOSwapRecomputeDetected();
+            }
             
             // Calculate amountIn based on R status
             ctx.swap.amountIn = _calculateAmountIn(
@@ -215,7 +220,9 @@ contract DODOSwap {
         uint256 i,
         uint256 k
     ) internal pure returns (uint256 payQuoteToken) {
-        require(amount < targetBaseAmount, DODOSwapInsufficientLiquidity());
+        if (amount >= targetBaseAmount) {
+            revert DODOSwapInsufficientLiquidity();
+        }
         uint256 B2 = targetBaseAmount - amount;
         return _RAboveIntegrate(targetBaseAmount, targetBaseAmount, B2, i, k);
     }
@@ -268,7 +275,9 @@ contract DODOSwap {
         uint256 i,
         uint256 k
     ) internal pure returns (uint256 payQuoteToken) {
-        require(amount < baseBalance, DODOSwapInsufficientLiquidity());
+        if (amount >= baseBalance) {
+            revert DODOSwapInsufficientLiquidity();
+        }
         uint256 B2 = baseBalance - amount;
         return _RAboveIntegrate(targetBaseAmount, baseBalance, B2, i, k);
     }

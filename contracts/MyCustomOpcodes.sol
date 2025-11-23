@@ -7,7 +7,7 @@ pragma solidity 0.8.30;
 import { AquaOpcodes } from "@1inch/swap-vm/src/opcodes/AquaOpcodes.sol";
 import { Context } from "@1inch/swap-vm/src/libs/VM.sol";
 import { FixedPriceSwap } from "./instructions/FixedPriceSwap.sol";
-import { ProAquativeMM } from "./instructions/ProAqtivSwap.sol";
+import { DODOSwap } from "./instructions/DODOSwap.sol";
 
 /**
  * @title MyCustomOpcodes
@@ -16,7 +16,7 @@ import { ProAquativeMM } from "./instructions/ProAqtivSwap.sol";
  * This demonstrates how to add your own instructions to the SwapVM opcode table.
  * The opcode number is determined by the array index in _opcodes().
  */
-contract MyCustomOpcodes is AquaOpcodes, FixedPriceSwap, ProAquativeMM {
+contract MyCustomOpcodes is AquaOpcodes, FixedPriceSwap, DODOSwap {
     constructor(address aqua) AquaOpcodes(aqua) {}
     
     /**
@@ -26,7 +26,7 @@ contract MyCustomOpcodes is AquaOpcodes, FixedPriceSwap, ProAquativeMM {
      * The array index becomes the opcode number:
      * - Index 0-28: Original AquaOpcodes instructions
      * - Index 29: FixedPriceSwap._fixedPriceSwapXD (opcode 0x1D)
-     * - Index 30: ProAquativeMM._ProAquativeMMSwap (opcode 0x1E)
+     * - Index 30: DODOSwap._dodoSwapXD (opcode 0x1E)
      */
     function _opcodes() internal pure override returns (
         function(Context memory, bytes calldata) internal[] memory result
@@ -45,7 +45,7 @@ contract MyCustomOpcodes is AquaOpcodes, FixedPriceSwap, ProAquativeMM {
         
         // Add our custom instructions at the end
         instructions[parent.length] = FixedPriceSwap._fixedPriceSwapXD;      // opcode 0x1D = 29
-        instructions[parent.length + 1] = ProAquativeMM._ProAquativeMMSwap; // opcode 0x1E = 30
+        instructions[parent.length + 1] = DODOSwap._dodoSwapXD; // opcode 0x1E = 30
         
         return instructions;
     }

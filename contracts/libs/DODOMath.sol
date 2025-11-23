@@ -27,7 +27,7 @@ library DODOMath {
         require(V0 >= V1 && V1 >= V2 && V2 > 0, "DODO_MATH_INVALID_V");
         
         uint256 fairAmount = DecimalMath.mul(i, V1 - V2); // i*delta
-        uint256 V0V0V1V2 = DecimalMath.divCeil((V0 * V0) / V1, V2);
+        uint256 V0V0V1V2 = DecimalMath.divCeilRaw((V0 * V0) / V1, V2);
         uint256 penalty = DecimalMath.mul(k, V0V0V1V2); // k(V0^2/V1/V2)
         
         return DecimalMath.mul(fairAmount, DecimalMath.ONE - k + penalty);

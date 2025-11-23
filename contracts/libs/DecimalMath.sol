@@ -19,7 +19,7 @@ library DecimalMath {
     /// @param d Second number
     /// @return Result of target * d / ONE, rounded up
     function mulCeil(uint256 target, uint256 d) internal pure returns (uint256) {
-        return divCeil(target * d, ONE);
+        return divCeilRaw(target * d, ONE);
     }
 
     /// @notice Divide two numbers and return fixed-point result (floor division)
@@ -38,11 +38,11 @@ library DecimalMath {
         return (target * ONE + d - 1) / d;
     }
 
-    /// @notice Internal ceiling division
+    /// @notice Internal ceiling division (raw, no fixed-point scaling)
     /// @param a Numerator
     /// @param b Denominator
     /// @return Result of a / b, rounded up
-    function divCeil(uint256 a, uint256 b) internal pure returns (uint256) {
+    function divCeilRaw(uint256 a, uint256 b) internal pure returns (uint256) {
         uint256 quotient = a / b;
         uint256 remainder = a - quotient * b;
         if (remainder > 0) {
