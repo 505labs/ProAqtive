@@ -20,17 +20,17 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
 
   // Get existing deployments
   const aqua = await get('Aqua');
-  const myCustomOpcodes = await get('MyCustomOpcodes');
+  const customRouter = await get('CustomSwapVMRouter');
 
   console.log(`Using Aqua: ${aqua.address}`);
-  console.log(`Using MyCustomOpcodes: ${myCustomOpcodes.address}`);
+  console.log(`Using CustomSwapVMRouter: ${customRouter.address}`);
 
   // Deploy MockTaker with custom router
   const mockTakerDeploy = await deploy('MockTaker', {
     from: deployer,
     args: [
       aqua.address,
-      myCustomOpcodes.address,  // Use MyCustomOpcodes instead of AquaSwapVMRouter
+      customRouter.address,  // Use CustomSwapVMRouter instead of AquaSwapVMRouter
       deployer
     ],
     log: true,
@@ -39,7 +39,7 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
 
   console.log(`✅ MockTaker deployed at: ${mockTakerDeploy.address}`);
   console.log(`   - Aqua: ${aqua.address}`);
-  console.log(`   - SwapVM Router: ${myCustomOpcodes.address}`);
+  console.log(`   - SwapVM Router: ${customRouter.address}`);
   console.log(`   - Owner: ${deployer}`);
 
   // Verify contract if not on localhost
@@ -53,7 +53,7 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
         address: mockTakerDeploy.address,
         constructorArguments: [
           aqua.address,
-          myCustomOpcodes.address,
+          customRouter.address,
           deployer
         ],
       });
@@ -72,5 +72,5 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
 
 export default func;
 func.tags = ['MockTakerCustom'];
-func.dependencies = ['Aqua', 'MyCustomOpcodes'];
+func.dependencies = ['Aqua', 'CustomRouter'];
 

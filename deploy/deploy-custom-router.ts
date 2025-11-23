@@ -21,19 +21,20 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
     throw new Error('Aqua not deployed. Please deploy Aqua first with: npx hardhat deploy --tags Aqua --network <network>');
   }
 
-  // Deploy MyCustomOpcodes (which is our CustomSwapVMRouter with DODOSwap)
-  const myCustomOpcodesDeploy = await deploy('MyCustomOpcodes', {
+  // Deploy CustomSwapVMRouter (full router with SwapVM + custom opcodes)
+  const customRouterDeploy = await deploy('CustomSwapVMRouter', {
     from: deployer,
-    args: [aquaAddress],
+    contract: 'CustomSwapVMRouter',
+    args: [aquaAddress, "Custom SwapVM Router", "1.0"],
     log: true,
     waitConfirmations: 1,
   });
 
-  console.log(`MyCustomOpcodes (CustomSwapVMRouter) deployed at: ${myCustomOpcodesDeploy.address}`);
+  console.log(`CustomSwapVMRouter deployed at: ${customRouterDeploy.address}`);
 
   console.log('\n=== CustomSwapVMRouter Deployment Summary ===');
   console.log(`Aqua: ${aquaAddress}`);
-  console.log(`MyCustomOpcodes (CustomSwapVMRouter): ${myCustomOpcodesDeploy.address}`);
+  console.log(`CustomSwapVMRouter: ${customRouterDeploy.address}`);
   console.log('=============================================\n');
 
   console.log('📝 Custom Opcodes Registered:');
@@ -47,28 +48,28 @@ const func: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
     console.log('Waiting for block confirmations...');
     await new Promise((resolve) => setTimeout(resolve, 30000)); // Wait 30 seconds
 
-    console.log('Verifying MyCustomOpcodes on Etherscan...');
+    console.log('Verifying CustomSwapVMRouter on Etherscan...');
 
     try {
       await hre.run('verify:verify', {
-        address: myCustomOpcodesDeploy.address,
-        constructorArguments: [aquaAddress],
+        address: customRouterDeploy.address,
+        constructorArguments: [aquaAddress, "Custom SwapVM Router", "1.0"],
       });
-      console.log(`✅ MyCustomOpcodes verified`);
+      console.log(`✅ CustomSwapVMRouter verified`);
     } catch (error: any) {
       if (error.message && error.message.includes('Already Verified')) {
-        console.log(`✅ MyCustomOpcodes is already verified on Etherscan`);
+        console.log(`✅ CustomSwapVMRouter is already verified on Etherscan`);
       } else {
-        console.error('❌ Failed to verify MyCustomOpcodes:', error.message || error);
+        console.error('❌ Failed to verify CustomSwapVMRouter:', error.message || error);
         console.log('\nYou can verify manually with:');
-        console.log(`npx hardhat verify --network ${hre.network.name} ${myCustomOpcodesDeploy.address} ${aquaAddress}`);
+        console.log(`npx hardhat verify --network ${hre.network.name} ${customRouterDeploy.address} ${aquaAddress} "Custom SwapVM Router" "1.0"`);
       }
     }
   }
 
   console.log('\n💡 Next Steps:');
-  console.log(`1. Use MyCustomOpcodes address for DODOSwap orders: ${myCustomOpcodesDeploy.address}`);
-  console.log(`2. Ship liquidity using this router instead of standard AquaSwapVMRouter`);
+  console.log(`1. Use CustomSwapVMRouter address for swaps: ${customRouterDeploy.address}`);
+  console.log(`2. Ship liquidity using this router`);
   console.log(`3. DODOSwap opcode is 0x1D (29), FixedPriceSwap is 0x1C (28)`);
 };
 

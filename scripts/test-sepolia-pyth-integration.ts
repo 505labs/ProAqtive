@@ -297,28 +297,39 @@ async function main() {
       console.log("✅ Sufficient balance\n");
     }
 
-    // Step 2: Approve tokens for ROUTER (not Aqua!) - for swap execution
-    console.log("═══ 🔓 Step 2: Approve Tokens to Router ===\n");
+    // Step 2: Approve tokens
+    console.log("═══ 🔓 Step 2: Approve Tokens ===\n");
     
     const routerAddress = await router.getAddress();
-    const mETHAllowance = await mETH.allowance(deployerAddress, routerAddress);
-    const mUSDCAllowance = await mUSDC.allowance(deployerAddress, routerAddress);
+    const aquaAddr = await aqua.getAddress();
     
-    if (mETHAllowance < LIQUIDITY_METH + SWAP_AMOUNT_METH) {
-      const tx = await mETH.approve(routerAddress, ethers.MaxUint256);
-      await waitForTx(tx, "Approve mETH to Router");
-      console.log("✅ mETH approved to Router\n");
+    // Taker approves ROUTER (for swap execution)
+    console.log("Taker approving router...");
+    const takerMETHAllowance = await mETH.allowance(takerAddress, routerAddress);
+    if (takerMETHAllowance < SWAP_AMOUNT_METH) {
+      const tx = await mETH.connect(taker).approve(routerAddress, ethers.MaxUint256);
+      await waitForTx(tx, "Taker approve mETH to Router");
+      console.log("✅ Taker approved mETH to Router\n");
     } else {
-      console.log("✅ mETH already approved to Router\n");
+      console.log("✅ Taker mETH already approved to Router\n");
     }
     
-    if (mUSDCAllowance < LIQUIDITY_MUSDC) {
-      const tx = await mUSDC.approve(routerAddress, ethers.MaxUint256);
-      await waitForTx(tx, "Approve mUSDC to Router");
-      console.log("✅ mUSDC approved to Router\n");
-    } else {
-      console.log("✅ mUSDC already approved to Router\n");
+    // Maker approves AQUA (for shipping liquidity)
+    console.log("Maker approving Aqua for liquidity...");
+    const makerMETHAllowanceAqua = await mETH.allowance(makerAddress, aquaAddr);
+    const makerMUSDCAllowanceAqua = await mUSDC.allowance(makerAddress, aquaAddr);
+    
+    if (makerMETHAllowanceAqua < LIQUIDITY_METH) {
+      const tx = await mETH.connect(maker).approve(aquaAddr, ethers.MaxUint256);
+      await waitForTx(tx, "Maker approve mETH to Aqua");
     }
+    
+    if (makerMUSDCAllowanceAqua < LIQUIDITY_MUSDC) {
+      const tx = await mUSDC.connect(maker).approve(aquaAddr, ethers.MaxUint256);
+      await waitForTx(tx, "Maker approve mUSDC to Aqua");
+    }
+    
+    console.log("✅ All approvals complete\n");
 
     // Step 3: Fetch REAL price from Pyth Hermes API
     console.log("═══ 🌐 Step 3: Fetch Real-Time Price from Pyth ═══\n");
