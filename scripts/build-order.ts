@@ -14,6 +14,7 @@ import { ethers } from "hardhat";
 import { getDeployedContract } from "./utils/helpers";
 import { ProAquativeAMM } from "../typechain-types/contracts/ProAquativeAMM";
 import { ISwapVM } from "../typechain-types/@1inch/swap-vm/src/interfaces/ISwapVM";
+import * as fs from "fs";
 
 async function main() {
     console.log("=== Building ProAquativeAMM Order ===\n");
@@ -26,10 +27,10 @@ async function main() {
     const proAquativeAMM = await getDeployedContract<ProAquativeAMM>("ProAquativeAMM");
 
     // Configuration (can be overridden via environment variables)
-    const pythOracle = process.env.PYTH_ORACLE || "0x0000000000000000000000000000000000000000"; // Replace with actual Pyth oracle
+    const pythOracle = process.env.PYTH_ORACLE || "0x6ac8CE4fBd739EC9253eeEd263b2C2D61C633732"; // Replace with actual Pyth oracle
     const priceId = process.env.PRICE_ID || ethers.id("TEST_PRICE_ID");
-    const k = process.env.K ? BigInt(process.env.K) : 500000000000000000n; // 0.5 (50%)
-    const maxStaleness = process.env.MAX_STALENESS ? BigInt(process.env.MAX_STALENESS) : 3600n; // 1 hour
+    const k = process.env.K ? BigInt(process.env.K) : 600000000000000000n; // 0.6 (60%)
+    const maxStaleness = process.env.MAX_STALENESS ? BigInt(process.env.MAX_STALENESS) : 7200n; // 1 hour
     const isTokenInBase = process.env.IS_TOKEN_IN_BASE !== "false"; // Default: true
     const baseDecimals = parseInt(process.env.BASE_DECIMALS || "18");
     const quoteDecimals = parseInt(process.env.QUOTE_DECIMALS || "18");
@@ -66,18 +67,25 @@ async function main() {
     // Save order for use in other scripts
     const orderStruct = {
         maker: order.maker,
-        traits: order.traits,
+        traits: order.traits.toString(),
         data: order.data
     };
 
-    console.log("\n📋 Order struct (for use in other scripts):");
-    console.log(JSON.stringify({
-        maker: orderStruct.maker,
-        traits: orderStruct.traits.toString(),
-        data: orderStruct.data
-    }, null, 2));
+    // Save to file (default: order.json, can be overridden with ORDER_FILE env var)
+    const orderFilePath = process.env.ORDER_FILE || "order.json";
+    fs.writeFileSync(orderFilePath, JSON.stringify(orderStruct, null, 2));
+    console.log(`\n💾 Order saved to: ${orderFilePath}`);
+    console.log(`   You can now use this file in other scripts:`);
+    console.log(`   ORDER_FILE=${orderFilePath} npx hardhat run scripts/ship-liquidity.ts --network sepolia`);
 
-    return orderStruct;
+    console.log("\n📋 Order struct:");
+    console.log(JSON.stringify(orderStruct, null, 2));
+
+    return {
+        maker: order.maker,
+        traits: order.traits,
+        data: order.data
+    };
 }
 
 main()

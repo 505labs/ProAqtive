@@ -37,9 +37,16 @@ async function main() {
 
     try {
         const proAquativeAMM = await getDeployedAddress("ProAquativeAMM");
-        console.log(`  ProAquativeAMM: ${proAquativeAMM}`);
+        console.log(`  ProAquativeAMM: ${proAquativeAMM || "Not deployed"}`);
     } catch (e) {
         console.log("  ProAquativeAMM: Not deployed");
+    }
+
+    try {
+        const mockPyth = await getDeployedAddress("MockPyth");
+        console.log(`  MockPyth: ${mockPyth || "Not deployed"}`);
+    } catch (e) {
+        console.log("  MockPyth: Not deployed");
     }
 
     // Check token balances if provided

@@ -27,6 +27,12 @@ TOKEN_IN=0x... TOKEN_OUT=0x... AMOUNT_IN=10 npx hardhat run scripts/get-quote.ts
 TOKEN_IN=0x... TOKEN_OUT=0x... AMOUNT_IN=10 npx hardhat run scripts/execute-swap.ts --network sepolia
 ```
 
+### Dock Liquidity
+```bash
+ORDER_FILE=order.json TOKEN0=0x... TOKEN1=0x... npx hardhat run scripts/dock-liquidity.ts --network sepolia
+```
+
+
 ### Full Workflow
 ```bash
 TOKEN0=0x... TOKEN1=0x... PYTH_ORACLE=0x... npx hardhat run scripts/full-workflow-example.ts --network sepolia
@@ -66,6 +72,10 @@ yarn script:sepolia scripts/build-order.ts
 4. get-quote.ts (uses order.json)
    ↓
 5. execute-swap.ts (uses order.json)
+   ↓
+6. dock-liquidity.ts (uses order.json) [optional]
+   ↓
+7. pull-liquidity.ts (uses order.json) [check balances]
 ```
 
 ## Tips
