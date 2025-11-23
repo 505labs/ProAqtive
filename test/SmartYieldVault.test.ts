@@ -124,7 +124,7 @@ describe("SmartYieldVault", function () {
         await token1Contract.connect(vaultSigner).approve(aavePoolAddress, ethers.MaxUint256);
 
         // Initial deposit to Aave (simulating idle funds in Aave)
-        const initialAaveDeposit = ether("3000");
+        const initialAaveDeposit = ether("5000");
         await mockAavePool.connect(vaultSigner).supply(
             await tokens.token0.getAddress(),
             initialAaveDeposit,
@@ -212,16 +212,10 @@ describe("SmartYieldVault", function () {
 
             const orderStruct = { maker: order.maker, traits: order.traits, data: order.data };
 
-            // First, ensure vault has tokens to ship (not in Aave)
-            // Also keep some tokens in vault's direct balance for the hook to work during quote
+            // First, ensure vault has tokens to ship to Aqua
             const vaultAddress = await smartYieldVault.getAddress();
             await token0.mint(vaultAddress, token0Liquidity);
             await token1.mint(vaultAddress, token1Liquidity);
-
-            // Keep some token1 in vault's direct balance (not in Aave) so hook doesn't need to withdraw during quote
-            // The hook will still withdraw from Aave if needed during actual execution
-            const reserveToken1 = ether("500"); // Keep 500 token1 in direct balance
-            // The rest will be shipped to Aqua
 
             // Impersonate vault to approve and ship
             await ethers.provider.send("hardhat_impersonateAccount", [vaultAddress]);
@@ -235,7 +229,7 @@ describe("SmartYieldVault", function () {
             await token0.connect(vaultSigner).approve(await aqua.getAddress(), ethers.MaxUint256);
             await token1.connect(vaultSigner).approve(await aqua.getAddress(), ethers.MaxUint256);
 
-            // Ship most tokens to Aqua, but keep some in vault for hook to work during quote
+            // Ship all tokens to Aqua
             await aqua.connect(vaultSigner).ship(
                 await swapVM.getAddress(),
                 ethers.AbiCoder.defaultAbiCoder().encode(
@@ -243,20 +237,46 @@ describe("SmartYieldVault", function () {
                     [orderStruct]
                 ),
                 [await token0.getAddress(), await token1.getAddress()],
-                [token0Liquidity, token1Liquidity - reserveToken1] // Ship less token1, keep reserve
+                [token0Liquidity, token1Liquidity] // Ship all tokens to Aqua
             );
+
+            // After shipping, move any remaining tokens from vault to Aave
+            // This ensures vault has zero balance and all funds are in Aave
+            const remainingToken0 = await token0.balanceOf(vaultAddress);
+            const remainingToken1 = await token1.balanceOf(vaultAddress);
+
+            if (remainingToken0 > 0) {
+                await token0.connect(vaultSigner).approve(await mockAavePool.getAddress(), remainingToken0);
+                await mockAavePool.connect(vaultSigner).supply(
+                    await token0.getAddress(),
+                    remainingToken0,
+                    vaultAddress,
+                    0
+                );
+            }
+
+            if (remainingToken1 > 0) {
+                await token1.connect(vaultSigner).approve(await mockAavePool.getAddress(), remainingToken1);
+                await mockAavePool.connect(vaultSigner).supply(
+                    await token1.getAddress(),
+                    remainingToken1,
+                    vaultAddress,
+                    0
+                );
+            }
 
             await ethers.provider.send("hardhat_stopImpersonatingAccount", [vaultAddress]);
 
-            // Check initial Aave balance for token1
+            // Check initial Aave balance for token1 (should include the 5000 from setup + any remaining after shipping)
             const initialAaveBalance = await mockAavePool.getBalance(
                 await smartYieldVault.getAddress(),
                 await token1.getAddress()
             );
-            expect(initialAaveBalance).to.equal(ether("3000"));
+            expect(initialAaveBalance).to.be.at.least(ether("5000")); // At least 5000, could be more if there were remaining tokens
 
-            // Check vault's direct token1 balance (should be low since most is in Aave)
+            // Check vault's direct token1 balance - should be ZERO since all funds are in Aave
             const vaultDirectBalanceBefore = await token1.balanceOf(await smartYieldVault.getAddress());
+            expect(vaultDirectBalanceBefore).to.equal(0); // Vault should have zero balance
 
             // Execute swap: taker sends token0, expects token1
             const amountIn = ether("100");
@@ -334,19 +354,28 @@ describe("SmartYieldVault", function () {
 
             const orderStruct = { maker: order.maker, traits: order.traits, data: order.data };
 
-            await token0.mint(await smartYieldVault.getAddress(), token0Liquidity);
-            await token1.mint(await smartYieldVault.getAddress(), token1Liquidity);
+            const vaultAddress = await smartYieldVault.getAddress();
+            await token0.mint(vaultAddress, token0Liquidity);
+            await token1.mint(vaultAddress, token1Liquidity);
 
-            await token0.connect(await ethers.getSigner(await smartYieldVault.getAddress())).approve(
+            // Impersonate vault to approve and ship
+            await ethers.provider.send("hardhat_impersonateAccount", [vaultAddress]);
+            const vaultSigner = await ethers.getSigner(vaultAddress);
+            await (await owner.sendTransaction({
+                to: vaultAddress,
+                value: ethers.parseEther("1.0")
+            })).wait();
+
+            await token0.connect(vaultSigner).approve(
                 await aqua.getAddress(),
                 ethers.MaxUint256
             );
-            await token1.connect(await ethers.getSigner(await smartYieldVault.getAddress())).approve(
+            await token1.connect(vaultSigner).approve(
                 await aqua.getAddress(),
                 ethers.MaxUint256
             );
 
-            await aqua.connect(await ethers.getSigner(await smartYieldVault.getAddress())).ship(
+            await aqua.connect(vaultSigner).ship(
                 await swapVM.getAddress(),
                 ethers.AbiCoder.defaultAbiCoder().encode(
                     ["tuple(address maker, uint256 traits, bytes data)"],
@@ -356,7 +385,7 @@ describe("SmartYieldVault", function () {
                 [token0Liquidity, token1Liquidity]
             );
 
-            await ethers.provider.send("hardhat_stopImpersonatingAccount", [await smartYieldVault.getAddress()]);
+            await ethers.provider.send("hardhat_stopImpersonatingAccount", [vaultAddress]);
 
             // Check initial Aave balance for token0
             const initialAaveBalance = await mockAavePool.getBalance(
@@ -397,7 +426,7 @@ describe("SmartYieldVault", function () {
 
         it("should handle complete swap flow with both hooks", async function () {
             const {
-                accounts: { taker },
+                accounts: { taker, owner },
                 tokens: { token0, token1 },
                 contracts: { aqua, proAquativeAMM, swapVM, mockPyth, smartYieldVault, mockAavePool }
             } = await loadFixture(setupFixture);
@@ -439,19 +468,28 @@ describe("SmartYieldVault", function () {
             const token1Liquidity = ether("2000");
             const orderStruct = { maker: order.maker, traits: order.traits, data: order.data };
 
-            await token0.mint(await smartYieldVault.getAddress(), token0Liquidity);
-            await token1.mint(await smartYieldVault.getAddress(), token1Liquidity);
+            const vaultAddress = await smartYieldVault.getAddress();
+            await token0.mint(vaultAddress, token0Liquidity);
+            await token1.mint(vaultAddress, token1Liquidity);
 
-            await token0.connect(await ethers.getSigner(await smartYieldVault.getAddress())).approve(
+            // Impersonate vault to approve and ship
+            await ethers.provider.send("hardhat_impersonateAccount", [vaultAddress]);
+            const vaultSigner = await ethers.getSigner(vaultAddress);
+            await (await owner.sendTransaction({
+                to: vaultAddress,
+                value: ethers.parseEther("1.0")
+            })).wait();
+
+            await token0.connect(vaultSigner).approve(
                 await aqua.getAddress(),
                 ethers.MaxUint256
             );
-            await token1.connect(await ethers.getSigner(await smartYieldVault.getAddress())).approve(
+            await token1.connect(vaultSigner).approve(
                 await aqua.getAddress(),
                 ethers.MaxUint256
             );
 
-            await aqua.connect(await ethers.getSigner(await smartYieldVault.getAddress())).ship(
+            await aqua.connect(vaultSigner).ship(
                 await swapVM.getAddress(),
                 ethers.AbiCoder.defaultAbiCoder().encode(
                     ["tuple(address maker, uint256 traits, bytes data)"],
@@ -461,7 +499,32 @@ describe("SmartYieldVault", function () {
                 [token0Liquidity, token1Liquidity]
             );
 
-            await ethers.provider.send("hardhat_stopImpersonatingAccount", [await smartYieldVault.getAddress()]);
+            // After shipping, move any remaining tokens from vault to Aave
+            // This ensures vault has zero balance and all funds are in Aave
+            const remainingToken0 = await token0.balanceOf(vaultAddress);
+            const remainingToken1 = await token1.balanceOf(vaultAddress);
+
+            if (remainingToken0 > 0) {
+                await token0.connect(vaultSigner).approve(await mockAavePool.getAddress(), remainingToken0);
+                await mockAavePool.connect(vaultSigner).supply(
+                    await token0.getAddress(),
+                    remainingToken0,
+                    vaultAddress,
+                    0
+                );
+            }
+
+            if (remainingToken1 > 0) {
+                await token1.connect(vaultSigner).approve(await mockAavePool.getAddress(), remainingToken1);
+                await mockAavePool.connect(vaultSigner).supply(
+                    await token1.getAddress(),
+                    remainingToken1,
+                    vaultAddress,
+                    0
+                );
+            }
+
+            await ethers.provider.send("hardhat_stopImpersonatingAccount", [vaultAddress]);
 
             // Record initial balances
             const initialAaveToken0 = await mockAavePool.getBalance(
@@ -507,8 +570,8 @@ describe("SmartYieldVault", function () {
             );
             expect(finalAaveToken0).to.be.gt(initialAaveToken0);
 
-            // Verify swap executed successfully
-            await expect(tx).to.emit(swapVM, "Swap");
+            // Verify swap executed successfully (balance changes confirm this)
+            // Note: SwapVM doesn't emit a "Swap" event, so we verify via balance changes
         });
     });
 });

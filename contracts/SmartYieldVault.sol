@@ -144,41 +144,43 @@ contract SmartYieldVault is IMakerHooks, Ownable {
         bytes calldata /* makerData */,
         bytes calldata /* takerData */
     ) external override onlyAqua {
-        // // Ensure this contract is the maker
-        // // Temporarily comment out to debug
-        // if (maker != address(this)) {
-        //     return; // Early return if maker doesn't match
-        // }
+        // Ensure this contract is the maker
+        require(maker == address(this), "SmartYieldVault: invalid maker");
         
-        // // Check current balance of tokenOut
-        // uint256 currentBalance = IERC20(tokenOut).balanceOf(address(this));
-        
-        // // If we don't have enough balance, check if we can withdraw from Aave
-        // if (currentBalance < amountOut) {
-        //     uint256 amountNeeded = amountOut - currentBalance;
-            
-        //     // Check how much we have in Aave
-        //     uint256 aaveBalance = IPool(aavePool).getBalance(address(this), tokenOut);
-            
-        // // Ensure we have enough total balance (direct + Aave)
-        // // This validation works in both quote (view) and execution
-        // // Temporarily comment out to debug
-        // if (currentBalance + aaveBalance < amountOut) {
-        //     revert("SmartYieldVault: insufficient total balance");
-        // }
-            
-        //     // During quote (view call), we can't withdraw, so we just validate
-        //     // During execution, we will actually withdraw
-        //     // For now, we skip the actual withdrawal to avoid reverts during quote
-        //     // The actual withdrawal will happen during execution when this hook is called again
-        //     // TODO: Implement proper withdrawal during execution phase
-        // } else {
-        //     // We have enough balance - try to emit event (will fail silently during view calls)
-        //     try this.emitPreTransferOutEvent(tokenOut, amountOut, orderHash) {} catch {}
-        // }
+        // Check current balance of tokenOut
+        uint256 currentBalance = IERC20(tokenOut).balanceOf(address(this));
 
-        // Completely empty hook for debugging - no operations at all
-        // This should work during both quote (view) and execution
+        // If we don't have enough balance, check if we can withdraw from Aave
+        if (currentBalance < amountOut) {
+            uint256 amountNeeded = amountOut - currentBalance;
+            
+            // Check how much we have in Aave
+            uint256 aaveBalance = IPool(aavePool).getBalance(address(this), tokenOut);
+        
+            // Ensure we have enough total balance (direct + Aave)
+            // This validation works in both quote (view) and execution
+            require(
+                currentBalance + aaveBalance >= amountOut,
+                "SmartYieldVault: insufficient total balance"
+            );
+
+            // Attempt to withdraw from Aave
+            // During quote (view call), this will fail silently (caught by try-catch)
+            // During execution, this will succeed and withdraw
+            try this._withdrawFromAave(tokenOut, amountNeeded) {
+                // Withdrawal succeeded (during execution) - emit event
+                emit PreTransferOutExecuted(tokenOut, amountOut, orderHash);
+
+            } catch {
+                // Withdrawal failed (during quote/view call) - that's expected and okay
+                // We've validated we have enough total balance
+                // The actual withdrawal will happen during execution when this hook is called again
+            }
+
+        } else {
+            // We have enough balance - try to emit event (will fail silently during view calls)
+            try this.emitPreTransferOutEvent(tokenOut, amountOut, orderHash) {} catch {}
+        }
     }
     
     /**
@@ -216,34 +218,36 @@ contract SmartYieldVault is IMakerHooks, Ownable {
         bytes calldata /* makerData */,
         bytes calldata /* takerData */
     ) external override onlyAqua {
-        // // Ensure this contract is the maker
-        // require(maker == address(this), "SmartYieldVault: invalid maker");
+        // Ensure this contract is the maker
+        require(maker == address(this), "SmartYieldVault: invalid maker");
         
-        // // Check current balance of tokenIn
-        // uint256 currentBalance = IERC20(tokenIn).balanceOf(address(this));
+        // Check current balance of tokenIn
+        uint256 currentBalance = IERC20(tokenIn).balanceOf(address(this));
         
-        // // Only deposit if we have a positive balance
-        // if (currentBalance > 0) {
-        //     // Approve Aave Pool to spend tokens
-        //     IERC20(tokenIn).approve(aavePool, currentBalance);
+        // Only deposit if we have a positive balance
+        if (currentBalance > 0) {
+            // Approve Aave Pool to spend tokens
+            IERC20(tokenIn).approve(aavePool, currentBalance);
             
-        //     // Supply tokens to Aave
-        //     // Use low-level call to handle view context gracefully
-        //     (bool success, ) = address(aavePool).call(
-        //         abi.encodeWithSelector(
-        //             IPool.supply.selector,
-        //             tokenIn,
-        //             currentBalance,
-        //             address(this),
-        //             REFERRAL_CODE
-        //         )
-        //     );
-        //     // If supply failed (e.g., during quote), that's okay
-        //     // The actual supply will happen during execution
-        // }
+            // Supply tokens to Aave
+            // Use low-level call to handle view context gracefully
+            (bool success, ) = address(aavePool).call(
+                abi.encodeWithSelector(
+                    IPool.supply.selector,
+                    tokenIn,
+                    currentBalance,
+                    address(this),
+                    REFERRAL_CODE
+                )
+            );
+            // If supply failed (e.g., during quote), that's okay
+            // The actual supply will happen during execution
+        }
         
         // Completely empty hook for debugging - no operations at all
         // This should work during both quote (view) and execution
+
+        // require(1 == 0, "HERE AAAAA");
     }
 
     /**
