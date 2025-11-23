@@ -12,18 +12,33 @@ import { ProAquativeMMArgsBuilder } from "./instructions/ProAqtivSwap.sol";
 
 /**
  * @title ProAquativeAMM
- * @notice AMM using ProAquativeMM instruction with Pyth oracle-based pricing
+ * @notice AMM using DODO-inspired Proactive Market Maker (PMM) with Pyth oracle pricing
  * 
- * This AMM uses a sophisticated pricing model that:
- * - Uses Pyth oracle for market price
- * - Applies a k parameter to adjust pricing based on liquidity depth
- * - Formula: P_margin = P_market * (1 - k + k * (B0/B)^2)
+ * This AMM implements a sophisticated pricing model inspired by DODO's PMM algorithm:
+ * - Integrates Pyth oracle for real-time market price feeds
+ * - Dynamically calculates equilibrium balance (B0) from current reserves and oracle price
+ * - Implements regression target calculations for price adjustments based on inventory deviation
+ * - Properly handles different reserve ratios
+ * 
+ * PMM Pricing Formula: P_margin = P_market * (1 - k + k * (B0/B)^2)
  * 
  * Where:
- * - P_market: Price from Pyth oracle
- * - k: Parameter (0-1) controlling how much liquidity depth affects price
- * - B0: Initial base token balance
+ * - P_market: Real-time price from Pyth oracle (normalized to token decimals)
+ * - k: Slippage parameter (0-1e18, where 1e18 = 100%)
+ *   - k=0: Pure oracle price (no slippage from inventory)
+ *   - k=1: Maximum slippage (Uniswap-style constant product)
+ * - B0: Equilibrium base token balance (calculated as B0 = Q / P_market)
+ *   - Represents the balance where pool matches oracle price
+ *   - Calculated dynamically from current reserves
  * - B: Current base token balance
+ * 
+ * Regression Target Behavior:
+ * - When B < B0: Pool has less base than equilibrium → price increases
+ * - When B > B0: Pool has more base than equilibrium → price decreases
+ * - The k parameter controls how strongly inventory deviation affects pricing
+ * 
+ * This allows the AMM to proactively adjust prices to guide the pool back toward equilibrium,
+ * while minimizing slippage and maintaining efficient capital utilization.
  */
 contract ProAquativeAMM is MyCustomOpcodes {
     using ProgramBuilder for Program;
@@ -31,16 +46,25 @@ contract ProAquativeAMM is MyCustomOpcodes {
     constructor(address aqua) MyCustomOpcodes(aqua) {}
     
     /**
-     * @notice Builds a ProAquativeMM order
+     * @notice Builds a DODO-inspired PMM order with dynamic equilibrium calculation
      * @param maker The address providing liquidity
-     * @param pythOracle Address of the Pyth oracle contract
-     * @param priceId The Pyth price feed ID (bytes32)
-     * @param k The k parameter (0-1e18, where 1e18 = 100%). Higher k = more liquidity depth impact
-     * @param maxStaleness Maximum age of price in seconds
+     * @param pythOracle Address of the Pyth oracle contract for real-time price feeds
+     * @param priceId The Pyth price feed ID (bytes32) - must match the base/quote pair
+     * @param k The slippage parameter (0-1e18, where 1e18 = 100%)
+     *        - k=0: Pure oracle pricing with no inventory-based slippage
+     *        - k=1: Maximum slippage (Uniswap-style constant product)
+     *        - Recommended: 0.1e18 to 0.5e18 for balanced behavior
+     * @param maxStaleness Maximum age of oracle price in seconds (e.g., 60 for 1 minute)
      * @param isTokenInBase Whether tokenIn is the base token (true) or quote token (false)
-     * @param baseDecimals Decimals of the base token
-     * @param quoteDecimals Decimals of the quote token
+     *        - Base token: The asset being priced (e.g., ETH in ETH/USDC)
+     *        - Quote token: The pricing currency (e.g., USDC in ETH/USDC)
+     * @param baseDecimals Decimals of the base token (e.g., 18 for ETH)
+     * @param quoteDecimals Decimals of the quote token (e.g., 6 for USDC)
      * @return order The SwapVM order with the ProAquativeMM swap program
+     * 
+     * @dev The contract dynamically calculates B0 (equilibrium balance) as B0 = Q / P_market
+     *      where Q is the current quote balance and P_market is the normalized oracle price.
+     *      No need to pass B0 as a parameter - it's computed on every swap.
      */
     function buildProgram(
         address maker,
