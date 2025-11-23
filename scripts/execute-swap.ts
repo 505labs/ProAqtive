@@ -4,14 +4,17 @@
  * Script to execute a swap using ProAquativeAMM
  * 
  * Usage:
- *   TOKEN_IN=0x... TOKEN_OUT=0x... AMOUNT_IN=10 ORDER_FILE=order.json npx hardhat run scripts/execute-swap.ts --network sepolia
+ *   # Recommended: Use ORDER_FILE to ensure order hash matches the one used when shipping liquidity
+ *   TOKEN_IN=0x... TOKEN_OUT=0x... AMOUNT_IN=10 ORDER_FILE=vault-order.json npx hardhat run scripts/execute-swap.ts --network sepolia
  * 
- * Or build order on the fly:
- *   TOKEN_IN=0x... TOKEN_OUT=0x... AMOUNT_IN=10 PYTH_ORACLE=0x... npx hardhat run scripts/execute-swap.ts --network sepolia
+ *   # Or build order on the fly (will auto-detect SmartYieldVault and use hooks if needed):
+ *   TOKEN_IN=0x... TOKEN_OUT=0x... AMOUNT_IN=10 MAKER_ADDRESS=0x... PYTH_ORACLE=0x... npx hardhat run scripts/execute-swap.ts --network sepolia
+ * 
+ * Note: When using SmartYieldVault, always use ORDER_FILE=vault-order.json to ensure the order hash matches!
  */
 
 import { ethers } from "hardhat";
-import { getDeployedContract, waitForTx, displayBalance, parseTokenAmount, formatTokenAmount } from "./utils/helpers";
+import { getDeployedContract, waitForTx, displayBalance, parseTokenAmount, formatTokenAmount, getDefaultTokens, getOrderConfig, getPriceId } from "./utils/helpers";
 import { CustomSwapVMRouter } from "../typechain-types/contracts/CustomSwapVMRouter";
 import { ProAquativeAMM } from "../typechain-types/contracts/ProAquativeAMM";
 import { Aqua } from "../typechain-types/@1inch/aqua/src/Aqua";
@@ -19,9 +22,6 @@ import { Aqua } from "../typechain-types/@1inch/aqua/src/Aqua";
 import * as fs from "fs";
 import * as path from "path";
 import { getQuote } from "./utils/get-quote";
-
-const DEFAULT_TOKEN0_ADDRESS = "0x6105E77Cd7942c4386C01d1F0B9DD7876141c549";  // Mock ETH
-const DEFAULT_TOKEN1_ADDRESS = "0x5aA57352bF243230Ce55dFDa70ba9c3A253432f6";  // Mock USDC
 
 async function main() {
     console.log("=== Executing Swap ===\n");
@@ -36,9 +36,10 @@ async function main() {
     const proAquativeAMM = await getDeployedContract<ProAquativeAMM>("ProAquativeAMM");
     const aqua = await getDeployedContract<Aqua>("Aqua");
 
-    // Get token addresses
-    const tokenInAddress = process.env.TOKEN_IN || DEFAULT_TOKEN0_ADDRESS;
-    const tokenOutAddress = process.env.TOKEN_OUT || DEFAULT_TOKEN1_ADDRESS;
+    // Get token addresses from config
+    const defaultTokens = getDefaultTokens();
+    const tokenInAddress = process.env.TOKEN_IN || defaultTokens.USDC;
+    const tokenOutAddress = process.env.TOKEN_OUT || defaultTokens.DAI;
 
     if (!tokenInAddress || !tokenOutAddress) {
         throw new Error("TOKEN_IN and TOKEN_OUT environment variables are required");
@@ -64,7 +65,24 @@ async function main() {
 
     // Build or load order
     let order;
-    const orderFilePath = process.env.ORDER_FILE || "order.json"; // Default to order.json like get-quote.ts
+
+    // Try to determine the correct order file:
+    // 1. Use ORDER_FILE env var if set
+    // 2. Try vault-order.json (used by ship-liquidity-vault.ts)
+    // 3. Fall back to order.json
+    let orderFilePath = process.env.ORDER_FILE;
+    if (!orderFilePath) {
+        if (fs.existsSync("vault-order.json")) {
+            orderFilePath = "vault-order.json";
+            console.log(`\n📂 Auto-detected vault-order.json (from ship-liquidity-vault.ts)`);
+        } else if (fs.existsSync("order.json")) {
+            orderFilePath = "order.json";
+            console.log(`\n📂 Auto-detected order.json`);
+        } else {
+            orderFilePath = "order.json"; // Default, will build new order
+        }
+    }
+
     if (orderFilePath && fs.existsSync(orderFilePath)) {
         console.log(`\n📂 Loading order from ${orderFilePath}...`);
         const orderData = JSON.parse(fs.readFileSync(orderFilePath, "utf-8"));
@@ -73,12 +91,68 @@ async function main() {
             traits: typeof orderData.traits === 'string' ? BigInt(orderData.traits) : BigInt(orderData.traits),
             data: orderData.data
         };
+        console.log(`   ✅ Order loaded: maker=${order.maker}`);
     } else {
-        console.log("\n🔨 Building new order...");
-        const makerAddress = process.env.MAKER_ADDRESS || takerAddress; // Use taker as maker if not specified
+        console.log(`\n🔨 Building new order (${orderFilePath} not found)...`);
+        let makerAddress = process.env.MAKER_ADDRESS || takerAddress; // Use taker as maker if not specified
 
-        // Try to auto-detect MockPyth if not provided (must match get-quote.ts and ship-liquidity.ts)
-        let pythOracle = process.env.PYTH_ORACLE;
+        // Check if maker is a SmartYieldVault (has hooks enabled)
+        // This ensures the order hash matches the one used when shipping liquidity
+        let useHooks = false;
+        let vaultAddress: string | null = null;
+
+        // First, try to get deployed SmartYieldVault address
+        try {
+            const { getDeployedAddress } = await import("./utils/helpers");
+            vaultAddress = await getDeployedAddress("SmartYieldVault");
+            if (vaultAddress && vaultAddress !== "") {
+                console.log(`   📍 Auto-detected deployed SmartYieldVault: ${vaultAddress}`);
+                // If maker is not set, use vault as maker
+                if (!process.env.MAKER_ADDRESS) {
+                    makerAddress = vaultAddress;
+                    console.log(`   ✅ Using vault as maker: ${makerAddress}`);
+                }
+                // If maker matches vault, use hooks
+                if (makerAddress.toLowerCase() === vaultAddress.toLowerCase()) {
+                    useHooks = true;
+                    console.log(`   ✅ Maker matches vault, will build order with hooks`);
+                }
+            }
+        } catch (e: any) {
+            // Vault might not be deployed, continue with other checks
+            console.log(`   ℹ️  Could not auto-detect SmartYieldVault: ${e.message || e}`);
+        }
+
+        // If still not determined, try to check if maker address is a SmartYieldVault
+        if (!useHooks) {
+            try {
+                const vault = await ethers.getContractAt("SmartYieldVault", makerAddress) as any;
+                // If we can read the owner, it's likely a SmartYieldVault
+                try {
+                    await vault.owner();
+                    useHooks = true;
+                    console.log(`   ✅ Detected SmartYieldVault at ${makerAddress}, will build order with hooks`);
+                } catch (e) {
+                    // Not a SmartYieldVault, continue without hooks
+                    console.log(`   ℹ️  Maker is not a SmartYieldVault, building order without hooks`);
+                }
+            } catch (e) {
+                // Couldn't determine if it's a vault, check VAULT_ADDRESS env var
+                const envVaultAddress = process.env.VAULT_ADDRESS;
+                if (envVaultAddress && envVaultAddress.toLowerCase() === makerAddress.toLowerCase()) {
+                    useHooks = true;
+                    console.log(`   ✅ VAULT_ADDRESS matches maker, will build order with hooks`);
+                } else {
+                    console.log(`   ℹ️  Building order without hooks (use VAULT_ADDRESS env var or set MAKER_ADDRESS to vault to enable hooks)`);
+                }
+            }
+        }
+
+        // Get order configuration from config
+        const orderConfig = getOrderConfig();
+
+        // Get pythOracle from config or env, with auto-detection fallback
+        let pythOracle = process.env.PYTH_ORACLE || orderConfig.pythOracle;
         if (!pythOracle || pythOracle === "0x0000000000000000000000000000000000000000") {
             try {
                 const { getDeployedAddress } = await import("./utils/helpers");
@@ -96,15 +170,18 @@ async function main() {
                 console.log(`   ⚠️  Error during MockPyth auto-detection: ${e.message || e}`);
             }
         } else {
-            console.log(`   ✅ Using provided PYTH_ORACLE: ${pythOracle}`);
+            console.log(`   ✅ Using PYTH_ORACLE: ${pythOracle}`);
         }
 
-        const priceId = process.env.PRICE_ID || ethers.id("TEST_PRICE_ID");
-        const k = process.env.K ? BigInt(process.env.K) : 400000000000000000n;
-        const maxStaleness = process.env.MAX_STALENESS ? BigInt(process.env.MAX_STALENESS) : 3600n;
-        const isTokenInBase = process.env.IS_TOKEN_IN_BASE !== "false";
-        const baseDecimals = parseInt(process.env.BASE_DECIMALS || "18");
-        const quoteDecimals = parseInt(process.env.QUOTE_DECIMALS || "18");
+        // Get order parameters from config (env vars override config)
+        const priceId = process.env.PRICE_ID ? getPriceId(process.env.PRICE_ID) : getPriceId(orderConfig.priceId);
+        const k = process.env.K ? BigInt(process.env.K) : orderConfig.k;
+        const maxStaleness = process.env.MAX_STALENESS ? BigInt(process.env.MAX_STALENESS) : orderConfig.maxStaleness;
+        const isTokenInBase = process.env.IS_TOKEN_IN_BASE !== undefined
+            ? process.env.IS_TOKEN_IN_BASE !== "false"
+            : orderConfig.isTokenInBase;
+        const baseDecimals = process.env.BASE_DECIMALS ? parseInt(process.env.BASE_DECIMALS) : orderConfig.baseDecimals;
+        const quoteDecimals = process.env.QUOTE_DECIMALS ? parseInt(process.env.QUOTE_DECIMALS) : orderConfig.quoteDecimals;
 
         if (pythOracle === "0x0000000000000000000000000000000000000000") {
             console.error("\n❌ ERROR: PYTH_ORACLE is zero address!");
@@ -116,16 +193,50 @@ async function main() {
             throw new Error("PYTH_ORACLE must be set to a valid address");
         }
 
-        const orderResult = await proAquativeAMM.buildProgram(
-            makerAddress,
-            pythOracle,
-            priceId,
-            k,
-            maxStaleness,
-            isTokenInBase,
-            baseDecimals,
-            quoteDecimals
-        );
+        let orderResult;
+        if (useHooks) {
+            // Build order with hooks (matching ship-liquidity-vault.ts)
+            const hookConfig = {
+                hasPreTransferInHook: false,
+                hasPostTransferInHook: true,
+                hasPreTransferOutHook: true,
+                hasPostTransferOutHook: false,
+                preTransferInTarget: ethers.ZeroAddress,
+                postTransferInTarget: makerAddress,
+                preTransferOutTarget: makerAddress,
+                postTransferOutTarget: ethers.ZeroAddress,
+                preTransferInData: "0x",
+                postTransferInData: "0x",
+                preTransferOutData: "0x",
+                postTransferOutData: "0x"
+            };
+
+            orderResult = await proAquativeAMM.getFunction("buildProgram(address,address,bytes32,uint64,uint64,bool,uint8,uint8,(bool,bool,bool,bool,address,address,address,address,bytes,bytes,bytes,bytes))")(
+                makerAddress,
+                pythOracle,
+                priceId,
+                k,
+                maxStaleness,
+                isTokenInBase,
+                baseDecimals,
+                quoteDecimals,
+                hookConfig
+            );
+            console.log("   ✅ Order built with hooks enabled");
+        } else {
+            // Build order without hooks
+            orderResult = await (proAquativeAMM as any).buildProgram(
+                makerAddress,
+                pythOracle,
+                priceId,
+                k,
+                maxStaleness,
+                isTokenInBase,
+                baseDecimals,
+                quoteDecimals
+            );
+            console.log("   ✅ Order built without hooks");
+        }
 
         order = {
             maker: orderResult.maker,
@@ -141,11 +252,42 @@ async function main() {
     console.log(`   Data length: ${order.data.length} bytes`);
     console.log(`   Data (hex, first 100 chars): ${order.data.slice(0, 100)}...`);
 
+    // Check if order has hooks enabled by examining traits
+    // Hook flags are in the traits: bits 248-251 for hooks
+    const traitsValue = BigInt(order.traits);
+    const hasPostTransferInHook = (traitsValue & (1n << 248n)) !== 0n;
+    const hasPreTransferOutHook = (traitsValue & (1n << 249n)) !== 0n;
+    const hasPreTransferInHook = (traitsValue & (1n << 250n)) !== 0n;
+    const hasPostTransferOutHook = (traitsValue & (1n << 251n)) !== 0n;
+
+    console.log(`\n   🔍 Hook Status:`);
+    console.log(`      PreTransferIn: ${hasPreTransferInHook ? '✅' : '❌'}`);
+    console.log(`      PostTransferIn: ${hasPostTransferInHook ? '✅' : '❌'}`);
+    console.log(`      PreTransferOut: ${hasPreTransferOutHook ? '✅' : '❌'}`);
+    console.log(`      PostTransferOut: ${hasPostTransferOutHook ? '✅' : '❌'}`);
+
+    // Check if maker is a vault and warn if hooks are missing
+    try {
+        const { getDeployedAddress } = await import("./utils/helpers");
+        const vaultAddress = await getDeployedAddress("SmartYieldVault");
+        if (vaultAddress && vaultAddress.toLowerCase() === order.maker.toLowerCase()) {
+            if (!hasPostTransferInHook || !hasPreTransferOutHook) {
+                console.log(`\n   ⚠️  WARNING: Order maker is a SmartYieldVault but hooks are not enabled!`);
+                console.log(`      This order hash will NOT match the one from ship-liquidity-vault.ts`);
+                console.log(`      💡 Solution: Use ORDER_FILE=vault-order.json to load the correct order`);
+            } else {
+                console.log(`   ✅ Order has hooks enabled (matches ship-liquidity-vault.ts)`);
+            }
+        }
+    } catch (e) {
+        // Ignore errors in vault detection
+    }
+
     const orderStruct = { maker: order.maker, traits: order.traits, data: order.data };
 
     // Calculate order hash for comparison
     const orderHashBeforeQuote = await swapVM.hash(orderStruct);
-    console.log(`\n   Order Hash (calculated in execute-swap): ${orderHashBeforeQuote}`);
+    console.log(`\n   📊 Order Hash (calculated in execute-swap): ${orderHashBeforeQuote}`);
 
     // Also log the raw order data to help debug
     console.log(`   Order data (full hex): ${order.data}`);
@@ -257,7 +399,102 @@ async function main() {
         throw new Error(`Order hash mismatch: expected ${quoteResult.orderHash}, got ${orderHashForSwap}`);
     }
 
+    // Important: Quote succeeded but swap might fail due to:
+    // 1. State changes between quote and swap (hooks modify state)
+    // 2. Insufficient balance in vault (hooks need to withdraw from Aave)
+    // 3. Hook execution failures
+
+    console.log("\n💡 Note: Quote succeeded, but swap execution may still fail if:");
+    console.log("   - Vault balance changed between quote and swap");
+    console.log("   - Hooks fail to withdraw from Aave (if using SmartYieldVault)");
+    console.log("   - State modifications in hooks cause issues");
+
+    // Try to simulate the swap first to get better error messages
+    console.log("\n🔍 Simulating swap (static call) to check for errors...");
     try {
+        await swapVM.connect(taker).swap.staticCall(
+            orderStruct,
+            tokenInAddress,
+            tokenOutAddress,
+            amountIn,
+            takerData
+        );
+        console.log("   ✅ Simulation successful - swap should execute");
+    } catch (simError: any) {
+        console.error("   ❌ Simulation failed - this indicates the swap will revert:");
+        const simErrorMsg = simError.reason || simError.message || simError.toString() || "";
+        console.error(`   Error: ${simErrorMsg}`);
+
+        // Try to decode error data if available
+        if (simError.data) {
+            console.error(`   Error Data: ${simError.data}`);
+
+            // Check if it's a custom error (starts with 0x and is 4 bytes)
+            if (simError.data.length === 10 && simError.data.startsWith("0x")) {
+                const errorSelector = simError.data;
+                console.error(`   Error Selector: ${errorSelector}`);
+
+                // Common error patterns
+                if (errorSelector === "0xf4059071") {
+                    console.error("\n   🔍 Decoding error 0xf4059071...");
+                    console.error("   This error selector typically indicates:");
+                    console.error("   - Insufficient liquidity in the order");
+                    console.error("   - Amount requested exceeds available balance");
+                    console.error("   - Hook execution failure (if using SmartYieldVault)");
+                    console.error("   - Price calculation failure in ProAquativeMM");
+                    console.error("\n   💡 Most likely causes:");
+                    console.error("   1. Not enough tokens in vault/Aqua for the swap");
+                    console.error("   2. Hook failed to withdraw from Aave (if using SmartYieldVault)");
+                    console.error("   3. Amount too large relative to available liquidity");
+                    console.error("   4. Price staleness or oracle failure");
+                }
+
+                // Try to decode using 4byte.directory format
+                console.error(`\n   💡 To decode this error selector, visit:`);
+                console.error(`   https://www.4byte.directory/signatures/?bytes4_signature=${errorSelector}`);
+            }
+        }
+
+        // Check if maker is a vault and check its balance
+        try {
+            const { getDeployedAddress } = await import("./utils/helpers");
+            const vaultAddress = await getDeployedAddress("SmartYieldVault");
+            if (vaultAddress && order.maker.toLowerCase() === vaultAddress.toLowerCase()) {
+                console.log("\n   💡 Detected SmartYieldVault as maker - checking vault balance...");
+                const vault = await ethers.getContractAt("SmartYieldVault", vaultAddress) as any;
+                const vaultBalanceIn = await tokenIn.balanceOf(vaultAddress);
+                const vaultBalanceOut = await tokenOut.balanceOf(vaultAddress);
+
+                console.log(`   Vault ${tokenInAddress} balance: ${formatTokenAmount(vaultBalanceIn)}`);
+                console.log(`   Vault ${tokenOutAddress} balance: ${formatTokenAmount(vaultBalanceOut)}`);
+
+                // Check if vault has enough balance for the swap
+                console.log(`   Required amountOut (from quote): ${formatTokenAmount(expectedAmountOut)}`);
+                if (vaultBalanceOut < expectedAmountOut) {
+                    console.error(`   ⚠️  WARNING: Vault may not have enough ${tokenOutAddress} balance!`);
+                    console.error(`   💡 The vault may need to withdraw from Aave via hooks`);
+                    console.error(`   💡 Or the amount requested is too large for available liquidity`);
+                    console.error(`   💡 Current vault balance: ${formatTokenAmount(vaultBalanceOut)}, needed: ${formatTokenAmount(expectedAmountOut)}`);
+                } else {
+                    console.log(`   ✅ Vault has sufficient balance for swap`);
+                }
+            }
+        } catch (e) {
+            // Ignore vault check errors
+        }
+
+        console.error("\n   💡 Try these solutions:");
+        console.error("   1. Reduce the swap amount (AMOUNT_IN)");
+        console.error("   2. Check if liquidity was shipped correctly");
+        console.error("   3. Verify the order hash matches the one used when shipping");
+        console.error("   4. If using SmartYieldVault, ensure hooks can withdraw from Aave");
+        console.error("   5. Update Pyth price if stale");
+
+        throw simError;
+    }
+
+    try {
+        console.log("\n🔄 Executing swap transaction...");
         const swapTx = await swapVM.connect(taker).swap(
             orderStruct,
             tokenInAddress,

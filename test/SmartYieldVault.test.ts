@@ -103,44 +103,17 @@ describe("SmartYieldVault", function () {
         const token0Contract = await ethers.getContractAt("IERC20", await tokens.token0.getAddress());
         const token1Contract = await ethers.getContractAt("IERC20", await tokens.token1.getAddress());
 
-        // Approve tokens for vault to use Aave (using impersonation or direct calls)
-        // Since we can't sign as the contract, we'll use a helper account to do the initial setup
-        // Or we can use hardhat's impersonateAccount feature
+        // Mint tokens to vault for initial Aave deposits
         const vaultAddress = await smartYieldVault.getAddress();
-        const aavePoolAddress = await mockAavePool.getAddress();
-
-        // Use hardhat's impersonateAccount to sign as the vault
-        await ethers.provider.send("hardhat_impersonateAccount", [vaultAddress]);
-        const vaultSigner = await ethers.getSigner(vaultAddress);
-
-        // Fund the vault address with ETH for gas
-        await (await accounts.owner.sendTransaction({
-            to: vaultAddress,
-            value: ethers.parseEther("1.0")
-        })).wait();
-
-        // Approve tokens for vault to use Aave
-        await token0Contract.connect(vaultSigner).approve(aavePoolAddress, ethers.MaxUint256);
-        await token1Contract.connect(vaultSigner).approve(aavePoolAddress, ethers.MaxUint256);
-
-        // Initial deposit to Aave (simulating idle funds in Aave)
         const initialAaveDeposit = ether("5000");
-        await mockAavePool.connect(vaultSigner).supply(
-            await tokens.token0.getAddress(),
-            initialAaveDeposit,
-            vaultAddress,
-            0
-        );
 
-        await mockAavePool.connect(vaultSigner).supply(
-            await tokens.token1.getAddress(),
-            initialAaveDeposit,
-            vaultAddress,
-            0
-        );
+        // Mint tokens directly to vault
+        await tokens.token0.mint(vaultAddress, initialAaveDeposit);
+        await tokens.token1.mint(vaultAddress, initialAaveDeposit);
 
-        // Stop impersonating
-        await ethers.provider.send("hardhat_stopImpersonatingAccount", [vaultAddress]);
+        // Supply tokens to Aave using vault's supplyToAave function (called by owner)
+        await smartYieldVault.connect(accounts.owner).supplyToAave(await tokens.token0.getAddress(), initialAaveDeposit);
+        await smartYieldVault.connect(accounts.owner).supplyToAave(await tokens.token1.getAddress(), initialAaveDeposit);
 
         // Approve tokens for maker to ship liquidity
         await tokens.token0.connect(accounts.maker).approve(await contracts.aqua.getAddress(), ethers.MaxUint256);
@@ -217,25 +190,19 @@ describe("SmartYieldVault", function () {
             await token0.mint(vaultAddress, token0Liquidity);
             await token1.mint(vaultAddress, token1Liquidity);
 
-            // Impersonate vault to approve and ship
-            await ethers.provider.send("hardhat_impersonateAccount", [vaultAddress]);
-            const vaultSigner = await ethers.getSigner(vaultAddress);
-            await (await owner.sendTransaction({
-                to: vaultAddress,
-                value: ethers.parseEther("1.0")
-            })).wait();
+            // Approve Aqua to pull tokens from vault (called by owner)
+            await smartYieldVault.connect(owner).approveAqua(await token0.getAddress(), await aqua.getAddress());
+            await smartYieldVault.connect(owner).approveAqua(await token1.getAddress(), await aqua.getAddress());
 
-            // Approve Aqua to pull tokens from vault
-            await token0.connect(vaultSigner).approve(await aqua.getAddress(), ethers.MaxUint256);
-            await token1.connect(vaultSigner).approve(await aqua.getAddress(), ethers.MaxUint256);
-
-            // Ship all tokens to Aqua
-            await aqua.connect(vaultSigner).ship(
+            // Ship all tokens to Aqua using vault's shipLiquidity method (called by owner)
+            const encodedOrder = ethers.AbiCoder.defaultAbiCoder().encode(
+                ["tuple(address maker, uint256 traits, bytes data)"],
+                [orderStruct]
+            );
+            await smartYieldVault.connect(owner).shipLiquidity(
+                await aqua.getAddress(),
                 await swapVM.getAddress(),
-                ethers.AbiCoder.defaultAbiCoder().encode(
-                    ["tuple(address maker, uint256 traits, bytes data)"],
-                    [orderStruct]
-                ),
+                encodedOrder,
                 [await token0.getAddress(), await token1.getAddress()],
                 [token0Liquidity, token1Liquidity] // Ship all tokens to Aqua
             );
@@ -246,26 +213,12 @@ describe("SmartYieldVault", function () {
             const remainingToken1 = await token1.balanceOf(vaultAddress);
 
             if (remainingToken0 > 0) {
-                await token0.connect(vaultSigner).approve(await mockAavePool.getAddress(), remainingToken0);
-                await mockAavePool.connect(vaultSigner).supply(
-                    await token0.getAddress(),
-                    remainingToken0,
-                    vaultAddress,
-                    0
-                );
+                await smartYieldVault.connect(owner).supplyToAave(await token0.getAddress(), remainingToken0);
             }
 
             if (remainingToken1 > 0) {
-                await token1.connect(vaultSigner).approve(await mockAavePool.getAddress(), remainingToken1);
-                await mockAavePool.connect(vaultSigner).supply(
-                    await token1.getAddress(),
-                    remainingToken1,
-                    vaultAddress,
-                    0
-                );
+                await smartYieldVault.connect(owner).supplyToAave(await token1.getAddress(), remainingToken1);
             }
-
-            await ethers.provider.send("hardhat_stopImpersonatingAccount", [vaultAddress]);
 
             // Check initial Aave balance for token1 (should include the 5000 from setup + any remaining after shipping)
             const initialAaveBalance = await mockAavePool.getBalance(
@@ -358,34 +311,23 @@ describe("SmartYieldVault", function () {
             await token0.mint(vaultAddress, token0Liquidity);
             await token1.mint(vaultAddress, token1Liquidity);
 
-            // Impersonate vault to approve and ship
-            await ethers.provider.send("hardhat_impersonateAccount", [vaultAddress]);
-            const vaultSigner = await ethers.getSigner(vaultAddress);
-            await (await owner.sendTransaction({
-                to: vaultAddress,
-                value: ethers.parseEther("1.0")
-            })).wait();
+            // Approve Aqua to pull tokens from vault (called by owner)
+            await smartYieldVault.connect(owner).approveAqua(await token0.getAddress(), await aqua.getAddress());
+            await smartYieldVault.connect(owner).approveAqua(await token1.getAddress(), await aqua.getAddress());
 
-            await token0.connect(vaultSigner).approve(
-                await aqua.getAddress(),
-                ethers.MaxUint256
+            // Ship all tokens to Aqua using vault's shipLiquidity method (called by owner)
+            const encodedOrder = ethers.AbiCoder.defaultAbiCoder().encode(
+                ["tuple(address maker, uint256 traits, bytes data)"],
+                [orderStruct]
             );
-            await token1.connect(vaultSigner).approve(
+            await smartYieldVault.connect(owner).shipLiquidity(
                 await aqua.getAddress(),
-                ethers.MaxUint256
-            );
-
-            await aqua.connect(vaultSigner).ship(
                 await swapVM.getAddress(),
-                ethers.AbiCoder.defaultAbiCoder().encode(
-                    ["tuple(address maker, uint256 traits, bytes data)"],
-                    [orderStruct]
-                ),
+                encodedOrder,
                 [await token0.getAddress(), await token1.getAddress()],
                 [token0Liquidity, token1Liquidity]
             );
 
-            await ethers.provider.send("hardhat_stopImpersonatingAccount", [vaultAddress]);
 
             // Check initial Aave balance for token0
             const initialAaveBalance = await mockAavePool.getBalance(
@@ -472,29 +414,19 @@ describe("SmartYieldVault", function () {
             await token0.mint(vaultAddress, token0Liquidity);
             await token1.mint(vaultAddress, token1Liquidity);
 
-            // Impersonate vault to approve and ship
-            await ethers.provider.send("hardhat_impersonateAccount", [vaultAddress]);
-            const vaultSigner = await ethers.getSigner(vaultAddress);
-            await (await owner.sendTransaction({
-                to: vaultAddress,
-                value: ethers.parseEther("1.0")
-            })).wait();
+            // Approve Aqua to pull tokens from vault (called by owner)
+            await smartYieldVault.connect(owner).approveAqua(await token0.getAddress(), await aqua.getAddress());
+            await smartYieldVault.connect(owner).approveAqua(await token1.getAddress(), await aqua.getAddress());
 
-            await token0.connect(vaultSigner).approve(
-                await aqua.getAddress(),
-                ethers.MaxUint256
+            // Ship all tokens to Aqua using vault's shipLiquidity method (called by owner)
+            const encodedOrder = ethers.AbiCoder.defaultAbiCoder().encode(
+                ["tuple(address maker, uint256 traits, bytes data)"],
+                [orderStruct]
             );
-            await token1.connect(vaultSigner).approve(
+            await smartYieldVault.connect(owner).shipLiquidity(
                 await aqua.getAddress(),
-                ethers.MaxUint256
-            );
-
-            await aqua.connect(vaultSigner).ship(
                 await swapVM.getAddress(),
-                ethers.AbiCoder.defaultAbiCoder().encode(
-                    ["tuple(address maker, uint256 traits, bytes data)"],
-                    [orderStruct]
-                ),
+                encodedOrder,
                 [await token0.getAddress(), await token1.getAddress()],
                 [token0Liquidity, token1Liquidity]
             );
@@ -505,26 +437,13 @@ describe("SmartYieldVault", function () {
             const remainingToken1 = await token1.balanceOf(vaultAddress);
 
             if (remainingToken0 > 0) {
-                await token0.connect(vaultSigner).approve(await mockAavePool.getAddress(), remainingToken0);
-                await mockAavePool.connect(vaultSigner).supply(
-                    await token0.getAddress(),
-                    remainingToken0,
-                    vaultAddress,
-                    0
-                );
+                await smartYieldVault.connect(owner).supplyToAave(await token0.getAddress(), remainingToken0);
             }
 
             if (remainingToken1 > 0) {
-                await token1.connect(vaultSigner).approve(await mockAavePool.getAddress(), remainingToken1);
-                await mockAavePool.connect(vaultSigner).supply(
-                    await token1.getAddress(),
-                    remainingToken1,
-                    vaultAddress,
-                    0
-                );
+                await smartYieldVault.connect(owner).supplyToAave(await token1.getAddress(), remainingToken1);
             }
 
-            await ethers.provider.send("hardhat_stopImpersonatingAccount", [vaultAddress]);
 
             // Record initial balances
             const initialAaveToken0 = await mockAavePool.getBalance(

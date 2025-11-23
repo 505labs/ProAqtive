@@ -8,6 +8,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { ISwapVM } from "@1inch/swap-vm/src/interfaces/ISwapVM.sol";
 import { IMakerHooks } from "@1inch/swap-vm/src/interfaces/IMakerHooks.sol";
+import { IAqua } from "@1inch/aqua/src/interfaces/IAqua.sol";
 
 /**
  * @title IPool
@@ -169,7 +170,7 @@ contract SmartYieldVault is IMakerHooks, Ownable {
             // During execution, this will succeed and withdraw
             try this._withdrawFromAave(tokenOut, amountNeeded) {
                 // Withdrawal succeeded (during execution) - emit event
-                emit PreTransferOutExecuted(tokenOut, amountOut, orderHash);
+            emit PreTransferOutExecuted(tokenOut, amountOut, orderHash);
 
             } catch {
                 // Withdrawal failed (during quote/view call) - that's expected and okay
@@ -204,17 +205,15 @@ contract SmartYieldVault is IMakerHooks, Ownable {
      * Deposits the received tokens into Aave for yield generation
      * @param maker The maker address (this contract)
      * @param tokenIn The input token address that was received
-     * @param amountIn The input amount that was received
-     * @param orderHash The order hash
      */
     function postTransferIn(
         address maker,
         address /* taker */,
         address tokenIn,
         address /* tokenOut */,
-        uint256 amountIn,
+        uint256 /* amountIn */,
         uint256 /* amountOut */,
-        bytes32 orderHash,
+        bytes32 /* orderHash */,
         bytes calldata /* makerData */,
         bytes calldata /* takerData */
     ) external override onlyAqua {
@@ -231,6 +230,7 @@ contract SmartYieldVault is IMakerHooks, Ownable {
             
             // Supply tokens to Aave
             // Use low-level call to handle view context gracefully
+            // We ignore the return value since this may fail during quote (view calls)
             (bool success, ) = address(aavePool).call(
                 abi.encodeWithSelector(
                     IPool.supply.selector,
@@ -242,6 +242,8 @@ contract SmartYieldVault is IMakerHooks, Ownable {
             );
             // If supply failed (e.g., during quote), that's okay
             // The actual supply will happen during execution
+            // Suppress unused variable warning
+            success;
         }
         
         // Completely empty hook for debugging - no operations at all
@@ -319,6 +321,65 @@ contract SmartYieldVault is IMakerHooks, Ownable {
      */
     function getBalance(address token) external view returns (uint256) {
         return IERC20(token).balanceOf(address(this));
+    }
+
+    /**
+     * @notice Approve Aqua contract to pull tokens from the vault
+     * @param token The token address to approve
+     * @param aquaAddress The Aqua contract address
+     */
+    function approveAqua(address token, address aquaAddress) external onlyOwner {
+        require(token != address(0), "SmartYieldVault: invalid token");
+        require(aquaAddress != address(0), "SmartYieldVault: invalid Aqua address");
+        
+        IERC20(token).approve(aquaAddress, type(uint256).max);
+    }
+
+    /**
+     * @notice Ship liquidity to Aqua
+     * @param aquaAddress The Aqua contract address
+     * @param swapVMAddress The SwapVM router address
+     * @param encodedOrder The encoded order (strategy)
+     * @param tokens Array of token addresses
+     * @param amounts Array of token amounts to ship
+     * @return strategyHash The hash of the shipped strategy
+     */
+    function shipLiquidity(
+        address aquaAddress,
+        address swapVMAddress,
+        bytes calldata encodedOrder,
+        address[] calldata tokens,
+        uint256[] calldata amounts
+    ) external onlyOwner returns (bytes32 strategyHash) {
+        require(aquaAddress != address(0), "SmartYieldVault: invalid Aqua address");
+        require(swapVMAddress != address(0), "SmartYieldVault: invalid SwapVM address");
+        require(tokens.length == amounts.length, "SmartYieldVault: tokens and amounts length mismatch");
+        require(tokens.length > 0, "SmartYieldVault: empty tokens array");
+        
+        // Call Aqua's ship function
+        strategyHash = IAqua(aquaAddress).ship(swapVMAddress, encodedOrder, tokens, amounts);
+    }
+
+    /**
+     * @notice Supply tokens to Aave
+     * @param token The token address to supply
+     * @param amount The amount to supply (0 = all balance)
+     */
+    function supplyToAave(address token, uint256 amount) external onlyOwner {
+        require(token != address(0), "SmartYieldVault: invalid token");
+        
+        IERC20 tokenContract = IERC20(token);
+        uint256 balance = tokenContract.balanceOf(address(this));
+        uint256 supplyAmount = amount == 0 ? balance : amount;
+        
+        require(supplyAmount > 0, "SmartYieldVault: no tokens to supply");
+        require(supplyAmount <= balance, "SmartYieldVault: insufficient balance");
+        
+        // Approve Aave Pool to spend tokens
+        tokenContract.approve(aavePool, supplyAmount);
+        
+        // Supply tokens to Aave
+        IPool(aavePool).supply(token, supplyAmount, address(this), REFERRAL_CODE);
     }
 
     /**
