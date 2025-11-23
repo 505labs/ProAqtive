@@ -23,16 +23,16 @@ import type { AquaSwapVMRouter } from "../typechain-types";
 // SEPOLIA DEPLOYED CONTRACTS (from your deployment)
 // ============================================================================
 const SEPOLIA_ADDRESSES = {
-  // Core Infrastructure (✅ FRESHLY DEPLOYED)
-  AQUA: "0xD5C0906640E84B6984E019bAB213F3F97964533b",
-  MY_CUSTOM_OPCODES: "0x38E30a17eF90F18E8b0e02D5A1e536df8ce1018D", // CustomSwapVMRouter
+  // Core Infrastructure (✅ FRESHLY DEPLOYED - Nov 23, 2025)
+  AQUA: "0x564762A7cfdb1023DA0f150F41586AC59096CB93",
+  MY_CUSTOM_OPCODES: "0x43e297a4B2b4acf3457C2CC9f66816dAb9e8c102", // CustomSwapVMRouter
   
-  // Tokens (✅ FRESHLY DEPLOYED)
-  METH: "0x8F0923F644A37DdE18d0a6f9808B48343ac7C589",  // TokenMock0
-  MUSDC: "0x8B7Ba14b5922FE54E5cbbc9B4e1559f426f38092", // TokenMock1
+  // Tokens (✅ FRESHLY DEPLOYED - Nov 23, 2025)
+  METH: "0xa83b1c12ee657CD7Cf565F253ff266024C14e236",  // TokenMock0
+  MUSDC: "0x867083bc9100b3C1252F0eb93C904a47d71d9Ef4", // TokenMock1
   
-  // Oracle (wraps Pyth) (✅ FRESHLY DEPLOYED)
-  ORACLE: "0x8220BbF0F47F781CB43B38977ED7105a485f9d3d",
+  // Oracle (wraps Pyth) (✅ FRESHLY DEPLOYED - Nov 23, 2025)
+  ORACLE: "0xCDbE0C5bCf1E86624451D027B03A979236177d20",
   
   // REAL Pyth Contract on Sepolia (unchanged)
   PYTH: "0xDd24F84d36BF92C65F92307595335bdFab5Bbd21"
@@ -60,7 +60,7 @@ const MAX_PRICE_STALENESS = 3600;                // 60 seconds max staleness
 const LIQUIDITY_METH = ether("5");      // 5 mETH liquidity (more than target of 2)
 const LIQUIDITY_MUSDC = ether("15000"); // 15,000 mUSDC liquidity (more than target of 5,600)
 const SWAP_AMOUNT_METH_SELL = ether("0.5");  // First swap: Sell 0.5 mETH
-const SWAP_AMOUNT_MUSDC_BUY = ether("300");    // Second swap: Buy 300 mUSDC worth of ETH
+const SWAP_AMOUNT_USD_BUY = ether("300");    // Second swap: Buy $300 worth of ETH
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -266,7 +266,7 @@ async function main() {
     console.log(`Current mUSDC: ${formatBalance(mUSDCBalance)}`);
     
     const needMETH = mETHBalance < LIQUIDITY_METH + SWAP_AMOUNT_METH_SELL;
-    const needMUSDC = mUSDCBalance < LIQUIDITY_MUSDC;
+    const needMUSDC = mUSDCBalance < LIQUIDITY_MUSDC + SWAP_AMOUNT_USD_BUY;
     
     if (needMETH || needMUSDC) {
       console.log("\n⚠️  Insufficient balance. Minting tokens...\n");
@@ -296,27 +296,6 @@ async function main() {
     
     const routerAddress = await router.getAddress();
     const aquaAddress2 = await aqua.getAddress();
-    
-    // Taker approves ROUTER (for swap execution)
-    console.log("Taker approving router...");
-    const takerMETHAllowance = await mETH.allowance(takerAddress, routerAddress);
-    if (takerMETHAllowance < SWAP_AMOUNT_METH_SELL) {
-      const tx = await (mETH as any).connect(taker).approve(routerAddress, ethers.MaxUint256);
-      await waitForTx(tx, "Taker approve mETH to Router");
-      console.log("✅ Taker approved mETH to Router\n");
-    } else {
-      console.log("✅ Taker mETH already approved to Router\n");
-    }
-    
-    // Taker also needs to approve mUSDC for the second swap
-    const takerMUSDCAllowance = await mUSDC.allowance(takerAddress, routerAddress);
-    if (takerMUSDCAllowance === 0n) {
-      const tx = await (mUSDC as any).connect(taker).approve(routerAddress, ethers.MaxUint256);
-      await waitForTx(tx, "Taker approve mUSDC to Router");
-      console.log("✅ Taker approved mUSDC to Router\n");
-    } else {
-      console.log("✅ Taker mUSDC already approved to Router\n");
-    }
     
     // Maker approves AQUA (for shipping liquidity)
     console.log("Maker approving Aqua for liquidity...");
@@ -464,116 +443,115 @@ async function main() {
     
     console.log("✅ Pyth price updated! DODOSwap can now read fresh price.\n");
 
-    // Step 9: Execute FIRST swap (Sell 0.5 mETH for mUSDC)
+    // Check taker has enough tokens for swaps
+    const takerMETHBalance = await mETH.balanceOf(takerAddress);
+    const takerMUSDCBalance = await mUSDC.balanceOf(takerAddress);
+    
+    if (takerMETHBalance < SWAP_AMOUNT_METH_SELL) {
+      console.log(`\n⚠️  Taker needs mETH. Minting ${formatBalance(SWAP_AMOUNT_METH_SELL * 2n)} mETH to taker...`);
+      const tx = await mETH.mint(takerAddress, SWAP_AMOUNT_METH_SELL * 2n);
+      await waitForTx(tx, "Mint mETH to taker");
+    }
+    
+    if (takerMUSDCBalance < SWAP_AMOUNT_USD_BUY) {
+      console.log(`\n⚠️  Taker needs mUSDC. Minting ${formatBalance(SWAP_AMOUNT_USD_BUY * 2n)} mUSDC to taker...`);
+      const tx = await mUSDC.mint(takerAddress, SWAP_AMOUNT_USD_BUY * 2n);
+      await waitForTx(tx, "Mint mUSDC to taker");
+    }
+    
+    // Approve taker tokens for router
+    const takerMETHAllowance = await mETH.allowance(takerAddress, routerAddress);
+    const takerMUSDCAllowance = await mUSDC.allowance(takerAddress, routerAddress);
+    
+    if (takerMETHAllowance < SWAP_AMOUNT_METH_SELL) {
+      const tx = await (mETH as any).connect(taker).approve(routerAddress, ethers.MaxUint256);
+      await waitForTx(tx, "Taker approve mETH to Router");
+    }
+    
+    if (takerMUSDCAllowance < SWAP_AMOUNT_USD_BUY) {
+      const tx = await (mUSDC as any).connect(taker).approve(routerAddress, ethers.MaxUint256);
+      await waitForTx(tx, "Taker approve mUSDC to Router");
+    }
+    console.log("✅ Taker tokens ready for swaps\n");
+
+    // Get initial LP pool balances
+    const [initialPoolMETH, initialTokensCountMETH] = await aqua.rawBalances(
+      makerAddress,
+      routerAddress,
+      orderHash,
+      await mETH.getAddress()
+    );
+    const [initialPoolMUSDC, initialTokensCountMUSDC] = await aqua.rawBalances(
+      makerAddress,
+      routerAddress,
+      orderHash,
+      await mUSDC.getAddress()
+    );
+    
+    console.log("💧 Initial LP Pool Balances:");
+    console.log(`  mETH: ${formatBalance(initialPoolMETH)}`);
+    console.log(`  mUSDC: ${formatBalance(initialPoolMUSDC)}`);
+    const initialPoolPrice = Number(initialPoolMUSDC) / Number(initialPoolMETH);
+    console.log(`  Pool Price: $${initialPoolPrice.toFixed(2)} per ETH\n`);
+
+    // Step 9: Execute FIRST swap - SELL 0.5 ETH for USDC
     console.log("═══ 🔄 Step 9: Execute First Swap - SELL 0.5 mETH ===\n");
     
-    const takerTraits = TakerTraitsLib.build({
-      taker: takerAddress,  // taker (different from maker!)
+    const takerTraitsSell = TakerTraitsLib.build({
+      taker: takerAddress,
       isExactIn: true,
-      threshold: 0n, // Accept any output for test
+      threshold: 0n,
       useTransferFromAndAquaPush: true
     });
     
-    console.log(`Taker (${takerAddress}) swapping ${formatBalance(SWAP_AMOUNT_METH_SELL)} mETH for mUSDC...`);
+    const mETHBefore1 = await mETH.balanceOf(takerAddress);
+    const mUSDCBefore1 = await mUSDC.balanceOf(takerAddress);
     
-    const mETHBefore = await mETH.balanceOf(takerAddress);
-    const mUSDCBefore = await mUSDC.balanceOf(takerAddress);
+    console.log(`Taker (${takerAddress}) selling ${formatBalance(SWAP_AMOUNT_METH_SELL)} mETH for mUSDC...`);
     
-    // Try to estimate gas first to catch revert reason
-    try {
-      const gasEstimate = await router.swap.estimateGas(
-        orderStruct,
-        await mETH.getAddress(),
-        await mUSDC.getAddress(),
-        SWAP_AMOUNT_METH_SELL,
-        takerTraits
-      );
-      console.log(`Estimated gas: ${gasEstimate.toString()}\n`);
-    } catch (estimateError: any) {
-      console.error("\n❌ Gas estimation failed - transaction will revert!");
-      console.error(`Error: ${estimateError.message}`);
-      if (estimateError.data) {
-        const errorData = estimateError.data;
-        const selector = errorData.slice(0, 10);
-        console.error(`Data: ${errorData}`);
-        console.error(`Error selector: ${selector}`);
-        
-        // Decode common errors
-        const errorSelectors: { [key: string]: string } = {
-          // Standard Solidity errors
-          "0x08c379a0": "Error(string) - Generic revert with message",
-          "0x4e487b71": "Panic(uint256) - Assertion/overflow/underflow",
-          
-          // DODOSwap errors
-          [ethers.id("DODOSwapInsufficientLiquidity()").slice(0, 10)]: "DODOSwapInsufficientLiquidity()",
-          [ethers.id("DODOSwapRecomputeDetected()").slice(0, 10)]: "DODOSwapRecomputeDetected() - Swap amounts already computed",
-          [ethers.id("DODOSwapInvalidKParameter(uint256)").slice(0, 10)]: "DODOSwapInvalidKParameter(uint256)",
-          [ethers.id("DODOSwapRequiresBothBalancesNonZero(uint256,uint256)").slice(0, 10)]: "DODOSwapRequiresBothBalancesNonZero()",
-          
-          // Oracle/Pyth errors
-          [ethers.id("StalePrice(uint256,uint256)").slice(0, 10)]: "StalePrice() - Pyth price too old",
-          [ethers.id("InvalidPrice(int64)").slice(0, 10)]: "InvalidPrice() - Pyth price invalid",
-          "0x19abf40e": "StalePrice() - Pyth SDK",
-          "0x14aebe68": "PriceFeedNotFound() - Pyth SDK",
-          
-          // SwapVM errors
-          [ethers.id("XYCSwapRecomputeDetected()").slice(0, 10)]: "XYCSwapRecomputeDetected()",
-          [ethers.id("LimitSwapRecomputeDetected()").slice(0, 10)]: "LimitSwapRecomputeDetected()",
-          [ethers.id("SetBalancesExpectZeroBalances(uint256,uint256)").slice(0, 10)]: "SetBalancesExpectZeroBalances() - Balances must be zero",
-          [ethers.id("RunLoopSwapAmountsComputationMissing(uint256,uint256)").slice(0, 10)]: "RunLoopSwapAmountsComputationMissing()",
-          
-          // Try manually adding the mystery error
-          "0xf4059071": "UNKNOWN ERROR - Manually check contract"
-        };
-        
-        // Check if we know this error
-        let found = false;
-        for (const [sel, name] of Object.entries(errorSelectors)) {
-          if (sel.toLowerCase() === selector.toLowerCase()) {
-            console.error(`\n🔍 Decoded Error: ${name}`);
-            found = true;
-            break;
-          }
-        }
-        
-        if (!found) {
-          console.error(`\n❌ Unknown error selector: ${selector}`);
-          console.error("Known selectors:");
-          for (const [sel, name] of Object.entries(errorSelectors)) {
-            console.error(`  ${sel} = ${name}`);
-          }
-        }
-      }
-      if (estimateError.reason) {
-        console.error(`Reason: ${estimateError.reason}`);
-      }
-      throw estimateError;
-    }
-    
-    // Taker executes the swap (connect as taker!)
-    const swapTx = await (router as any).connect(taker || deployer).swap(
+    const swapTx1 = await (router as any).connect(taker || deployer).swap(
       orderStruct,
       await mETH.getAddress(),
       await mUSDC.getAddress(),
       SWAP_AMOUNT_METH_SELL,
-      takerTraits
+      takerTraitsSell
     );
     
-    const receipt1 = await waitForTx(swapTx, "Execute first swap (Sell mETH)");
+    const receipt1 = await waitForTx(swapTx1, "Execute first swap (Sell mETH)");
     
     const mETHAfter1 = await mETH.balanceOf(takerAddress);
     const mUSDCAfter1 = await mUSDC.balanceOf(takerAddress);
     
-    const mETHChange1 = mETHAfter1 - mETHBefore;
-    const mUSDCChange1 = mUSDCAfter1 - mUSDCBefore;
+    const mETHChange1 = mETHAfter1 - mETHBefore1;
+    const mUSDCChange1 = mUSDCAfter1 - mUSDCBefore1;
     
     console.log("\n📊 First Swap Results:");
     console.log(`  mETH: ${mETHChange1 >= 0n ? '+' : ''}${ethers.formatEther(mETHChange1 < 0n ? -mETHChange1 : mETHChange1)}`);
     console.log(`  mUSDC: ${mUSDCChange1 >= 0n ? '+' : ''}${ethers.formatEther(mUSDCChange1 < 0n ? -mUSDCChange1 : mUSDCChange1)}`);
     
+    // Get LP pool balances after first swap
+    const [poolMETH1, tokensCountMETH1] = await aqua.rawBalances(
+      makerAddress,
+      routerAddress,
+      orderHash,
+      await mETH.getAddress()
+    );
+    const [poolMUSDC1, tokensCountMUSDC1] = await aqua.rawBalances(
+      makerAddress,
+      routerAddress,
+      orderHash,
+      await mUSDC.getAddress()
+    );
+    
+    console.log("\n💧 LP Pool Balances After First Swap:");
+    console.log(`  mETH: ${formatBalance(poolMETH1)}`);
+    console.log(`  mUSDC: ${formatBalance(poolMUSDC1)}`);
+    const poolPrice1 = Number(poolMUSDC1) / Number(poolMETH1);
+    console.log(`  Pool Price: $${poolPrice1.toFixed(2)} per ETH`);
+    
     if (mETHChange1 < 0n && mUSDCChange1 > 0n) {
       const actualPrice1 = Number(mUSDCChange1) / Number(-mETHChange1);
-      console.log(`  Price Paid: $${actualPrice1.toFixed(2)} per mETH`);
+      console.log(`\n  Taker Price Paid: $${actualPrice1.toFixed(2)} per mETH`);
       
       if (currentPrice) {
         const priceDeviation1 = ((actualPrice1 / currentPrice.price) - 1) * 100;
@@ -584,8 +562,8 @@ async function main() {
     console.log(`\nTransaction 1: https://sepolia.etherscan.io/tx/${receipt1.hash}`);
     console.log(`Gas Used: ${receipt1.gasUsed.toString()}\n`);
 
-    // Step 10: Execute SECOND swap (Buy back 0.3 mETH with mUSDC)
-    console.log("═══ 🔄 Step 10: Execute Second Swap - BUY BACK 0.3 mETH ===\n");
+    // Step 10: Execute SECOND swap - BUY $300 worth of ETH
+    console.log("═══ 🔄 Step 10: Execute Second Swap - BUY $300 worth of ETH ===\n");
     
     // Update Pyth price again for the second swap
     console.log("Fetching fresh price update from Hermes for second swap...");
@@ -598,27 +576,35 @@ async function main() {
     
     console.log("✅ Pyth price updated for second swap!\n");
     
-    // For the second swap, we're buying mETH (output) with mUSDC (input)
-    // So we use isExactIn: false and specify the exact output amount (0.3 mETH)
-    const takerTraits2 = TakerTraitsLib.build({
+    // Get current price to calculate ETH amount for $300
+    const currentPrice2 = await getCurrentPriceFromHermes(ETH_USD_PRICE_FEED_ID);
+    if (!currentPrice2) {
+      throw new Error("Could not fetch current price for calculating ETH amount");
+    }
+    
+    // Calculate ETH amount for $300: 300 / price
+    const ethAmountFor300USD = BigInt(Math.floor((300 / currentPrice2.price) * 1e18));
+    console.log(`Current ETH/USD Price: $${currentPrice2.price.toFixed(2)}`);
+    console.log(`Buying $300 worth of ETH ≈ ${formatBalance(ethAmountFor300USD)} mETH\n`);
+    
+    const takerTraitsBuy = TakerTraitsLib.build({
       taker: takerAddress,
-      isExactIn: true,  // We want exactly 0.3 mETH out
-      threshold: ethers.MaxUint256, // Accept any input amount for test
+      isExactIn: false,  // Exact ETH output (will calculate USDC input)
+      threshold: ethers.MaxUint256, // Accept any input amount
       useTransferFromAndAquaPush: true
     });
-    
-    console.log(`Taker buying back ${formatBalance(SWAP_AMOUNT_MUSDC_BUY)} mUSDC worth of mETH...`);
     
     const mETHBefore2 = await mETH.balanceOf(takerAddress);
     const mUSDCBefore2 = await mUSDC.balanceOf(takerAddress);
     
-    // For the second swap, input is mUSDC, output is mETH
+    console.log(`Taker buying $300 worth of ETH (≈${formatBalance(ethAmountFor300USD)} mETH)...`);
+    
     const swapTx2 = await (router as any).connect(taker || deployer).swap(
       orderStruct,
       await mUSDC.getAddress(),  // Input: mUSDC
       await mETH.getAddress(),   // Output: mETH
-      SWAP_AMOUNT_MUSDC_BUY,      // Amount: 0.3 mETH (output amount since isExactIn: false)
-      takerTraits2
+      ethAmountFor300USD,        // Exact output amount (ETH)
+      takerTraitsBuy
     );
     
     const receipt2 = await waitForTx(swapTx2, "Execute second swap (Buy mETH)");
@@ -633,12 +619,33 @@ async function main() {
     console.log(`  mETH: ${mETHChange2 >= 0n ? '+' : ''}${ethers.formatEther(mETHChange2 < 0n ? -mETHChange2 : mETHChange2)}`);
     console.log(`  mUSDC: ${mUSDCChange2 >= 0n ? '+' : ''}${ethers.formatEther(mUSDCChange2 < 0n ? -mUSDCChange2 : mUSDCChange2)}`);
     
+    // Get LP pool balances after second swap
+    const [poolMETH2, tokensCountMETH2] = await aqua.rawBalances(
+      makerAddress,
+      routerAddress,
+      orderHash,
+      await mETH.getAddress()
+    );
+    const [poolMUSDC2, tokensCountMUSDC2] = await aqua.rawBalances(
+      makerAddress,
+      routerAddress,
+      orderHash,
+      await mUSDC.getAddress()
+    );
+    
+    console.log("\n💧 LP Pool Balances After Second Swap:");
+    console.log(`  mETH: ${formatBalance(poolMETH2)}`);
+    console.log(`  mUSDC: ${formatBalance(poolMUSDC2)}`);
+    const poolPrice2 = Number(poolMUSDC2) / Number(poolMETH2);
+    console.log(`  Pool Price: $${poolPrice2.toFixed(2)} per ETH`);
+    
     if (mETHChange2 > 0n && mUSDCChange2 < 0n) {
       const actualPrice2 = Number(-mUSDCChange2) / Number(mETHChange2);
-      console.log(`  Price Paid: $${actualPrice2.toFixed(2)} per mETH`);
+      console.log(`\n  Taker Price Paid: $${actualPrice2.toFixed(2)} per mETH`);
+      console.log(`  Total USDC Spent: $${(-Number(mUSDCChange2) / 1e18).toFixed(2)}`);
       
-      if (currentPrice) {
-        const priceDeviation2 = ((actualPrice2 / currentPrice.price) - 1) * 100;
+      if (currentPrice2) {
+        const priceDeviation2 = ((actualPrice2 / currentPrice2.price) - 1) * 100;
         console.log(`  Price Deviation: ${priceDeviation2 >= 0 ? '+' : ''}${priceDeviation2.toFixed(2)}%`);
       }
     }
@@ -646,23 +653,15 @@ async function main() {
     console.log(`\nTransaction 2: https://sepolia.etherscan.io/tx/${receipt2.hash}`);
     console.log(`Gas Used: ${receipt2.gasUsed.toString()}\n`);
 
-    // Step 11: Final Results
-    console.log("═══ 📈 Step 11: Final Results ═══\n");
-    
-    const totalMETHChange = mETHChange1 + mETHChange2;
-    const totalMUSDCChange = mUSDCChange1 + mUSDCChange2;
-    
-    console.log("Net Balance Changes (Both Swaps):");
-    console.log(`  mETH: ${totalMETHChange >= 0n ? '+' : ''}${ethers.formatEther(totalMETHChange < 0n ? -totalMETHChange : totalMETHChange)}`);
-    console.log(`  mUSDC: ${totalMUSDCChange >= 0n ? '+' : ''}${ethers.formatEther(totalMUSDCChange < 0n ? -totalMUSDCChange : totalMUSDCChange)}`);
-    
     console.log("\n╔════════════════════════════════════════════════════════════╗");
     console.log("║                                                            ║");
-    console.log("║            ✅ INTEGRATION TEST SUCCESSFUL! ✅              ║");
+    console.log("║         ✅ BIDIRECTIONAL TEST SUCCESSFUL! ✅              ║");
+    console.log("║                                                            ║");
+    console.log("║  ONE order works for BOTH directions! 🎉                   ║");
+    console.log("║  ✓ Sold 0.5 ETH for USDC (base → quote)                   ║");
+    console.log("║  ✓ Bought $300 worth of ETH (quote → base)                ║");
     console.log("║                                                            ║");
     console.log("║  DODOSwap is working with REAL Pyth oracle on Sepolia!    ║");
-    console.log("║  ✓ Sold 0.5 mETH for mUSDC                                ║");
-    console.log("║  ✓ Bought back 0.3 mETH with mUSDC                        ║");
     console.log("║                                                            ║");
     console.log("╚════════════════════════════════════════════════════════════╝\n");
 

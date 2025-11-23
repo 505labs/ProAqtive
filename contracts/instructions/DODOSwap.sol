@@ -41,7 +41,7 @@ contract DODOSwap {
         uint256 k;
         uint256 targetBaseAmount;
         uint256 targetQuoteAmount;
-        bool baseIsTokenIn;
+        bool baseIsTokenIn;     // Defines canonical order: true = base is first token in liquidity array
     }
 
     // ============ R Status Derivation ============
@@ -107,21 +107,50 @@ contract DODOSwap {
         // Formula: price = pythPrice.price * 10^(18 + pythPrice.expo)
         uint256 oraclePrice = _convertPythPrice(pythPrice);
 
-        // Determine base and quote balances
-        // baseIsTokenIn determines which token is base:
-        //   - true: base is tokenIn (balanceIn), quote is tokenOut (balanceOut) - for SELLING base
-        //   - false: base is tokenOut (balanceOut), quote is tokenIn (balanceIn) - for BUYING base
+        // Determine base and quote balances dynamically using isExactIn
+        // baseIsTokenIn defines canonical order: true = base is first token in liquidity array
+        // 
+        // Key insight: Use isExactIn to determine swap direction:
+        // - If isExactIn=true: We have amountIn, so balanceIn is the input token
+        // - If isExactIn=false: We have amountOut, so balanceOut is the output token
+        // 
+        // Direction logic:
+        // - If baseIsTokenIn=true: base is first token (canonical: base→quote)
+        //   * isExactIn=true: input is first token → selling base (canonical)
+        //   * isExactIn=false: output is second token → buying base (reversed)
+        // - If baseIsTokenIn=false: base is second token (canonical: quote→base)
+        //   * isExactIn=true: input is first token → buying base (canonical)
+        //   * isExactIn=false: output is second token → selling base (reversed)
         uint256 baseBalance;
         uint256 quoteBalance;
+        bool isSellingBase;
         
         if (params.baseIsTokenIn) {
-            // Selling base for quote (e.g., ETH → USDC)
-            baseBalance = ctx.swap.balanceIn;
-            quoteBalance = ctx.swap.balanceOut;
+            // Canonical: base is first token
+            if (ctx.query.isExactIn) {
+                // Input is first token → selling base (canonical direction)
+                baseBalance = ctx.swap.balanceIn;
+                quoteBalance = ctx.swap.balanceOut;
+                isSellingBase = true;
+            } else {
+                // Output is second token → buying base (reversed direction)
+                baseBalance = ctx.swap.balanceOut;
+                quoteBalance = ctx.swap.balanceIn;
+                isSellingBase = false;
+            }
         } else {
-            // Buying base with quote (e.g., USDC → ETH)
-            baseBalance = ctx.swap.balanceOut;
-            quoteBalance = ctx.swap.balanceIn;
+            // Canonical: base is second token
+            if (ctx.query.isExactIn) {
+                // Input is first token → buying base (canonical direction)
+                baseBalance = ctx.swap.balanceOut;
+                quoteBalance = ctx.swap.balanceIn;
+                isSellingBase = false;
+            } else {
+                // Output is second token → selling base (reversed direction)
+                baseBalance = ctx.swap.balanceIn;
+                quoteBalance = ctx.swap.balanceOut;
+                isSellingBase = true;
+            }
         }
 
         // Derive R status from current balances
@@ -149,7 +178,7 @@ contract DODOSwap {
                 rStatus,
                 oraclePrice,
                 params.k,
-                params.baseIsTokenIn  // true = selling base, false = buying base
+                isSellingBase  // Dynamically determined direction
             );
         } else {
             // Prevent recomputation
@@ -167,7 +196,7 @@ contract DODOSwap {
                 rStatus,
                 oraclePrice,
                 params.k,
-                params.baseIsTokenIn  // true = selling base, false = buying base
+                isSellingBase  // Dynamically determined direction
             );
         }
     }

@@ -108,12 +108,12 @@ async function main() {
     await mUSDC.connect(taker).approve(await router.getAddress(), ethers.MaxUint256);
     console.log("✅ All tokens approved\n");
 
-    // Build TWO separate DODO orders - one for buying, one for selling
-    console.log("═══ 🔨 Building TWO DODO Orders (Buy & Sell) ═══\n");
+    // Build ONE DODO order - should work bidirectionally using isExactIn
+    console.log("═══ 🔨 Building ONE DODO Order (Bidirectional) ═══\n");
     
-    // ORDER 1: For BUYING base (ETH) with quote (USDC)
-    // baseIsTokenIn = false means: base is OUTPUT, quote is INPUT
-    const dodoParamsBuy = ethers.AbiCoder.defaultAbiCoder().encode(
+    // Build ONE order with baseIsTokenIn=true (base is first token in liquidity array)
+    // Contract will determine direction dynamically using isExactIn
+    const dodoParams = ethers.AbiCoder.defaultAbiCoder().encode(
       ["tuple(address pythContract, bytes32 priceFeedId, uint256 maxStaleness, uint256 k, uint256 targetBaseAmount, uint256 targetQuoteAmount, bool baseIsTokenIn)"],
       [[
         await mockPyth.getAddress(),
@@ -122,95 +122,70 @@ async function main() {
         K_PARAMETER,
         TARGET_BASE_AMOUNT,
         TARGET_QUOTE_AMOUNT,
-        false  // base (ETH) is OUTPUT - for buying ETH
+        true  // base (ETH) is first token - contract will handle both directions
       ]]
     );
     
-    const programBuilderBuy = new ProgramBuilder();
-    programBuilderBuy.addInstruction(DODO_SWAP_OPCODE, dodoParamsBuy);
-    const programBuy = programBuilderBuy.build();
+    const programBuilder = new ProgramBuilder();
+    programBuilder.addInstruction(DODO_SWAP_OPCODE, dodoParams);
+    const program = programBuilder.build();
     
-    const orderBuy = MakerTraitsLib.build({
+    const order = MakerTraitsLib.build({
       maker: maker.address,
       receiver: maker.address,
       useAquaInsteadOfSignature: true,
-      program: programBuy
+      program: program
     });
     
-    const orderStructBuy = { maker: orderBuy.maker, traits: orderBuy.traits, data: orderBuy.data };
-    const encodedOrderBuy = ethers.AbiCoder.defaultAbiCoder().encode(
+    const orderStruct = { maker: order.maker, traits: order.traits, data: order.data };
+    const encodedOrder = ethers.AbiCoder.defaultAbiCoder().encode(
       ["tuple(address maker, uint256 traits, bytes data)"],
-      [orderStructBuy]
+      [orderStruct]
     );
-    const orderHashBuy = ethers.keccak256(encodedOrderBuy);
-    console.log(`📝 Buy Order Hash: ${orderHashBuy}`);
-    
-    // ORDER 2: For SELLING base (ETH) for quote (USDC)
-    // baseIsTokenIn = true means: base is INPUT, quote is OUTPUT
-    const dodoParamsSell = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["tuple(address pythContract, bytes32 priceFeedId, uint256 maxStaleness, uint256 k, uint256 targetBaseAmount, uint256 targetQuoteAmount, bool baseIsTokenIn)"],
-      [[
-        await mockPyth.getAddress(),
-        ETH_USD_FEED_ID,
-        MAX_PRICE_STALENESS,
-        K_PARAMETER,
-        TARGET_BASE_AMOUNT,
-        TARGET_QUOTE_AMOUNT,
-        true  // base (ETH) is INPUT - for selling ETH
-      ]]
-    );
-    
-    const programBuilderSell = new ProgramBuilder();
-    programBuilderSell.addInstruction(DODO_SWAP_OPCODE, dodoParamsSell);
-    const programSell = programBuilderSell.build();
-    
-    const orderSell = MakerTraitsLib.build({
-      maker: maker.address,
-      receiver: maker.address,
-      useAquaInsteadOfSignature: true,
-      program: programSell
-    });
-    
-    const orderStructSell = { maker: orderSell.maker, traits: orderSell.traits, data: orderSell.data };
-    const encodedOrderSell = ethers.AbiCoder.defaultAbiCoder().encode(
-      ["tuple(address maker, uint256 traits, bytes data)"],
-      [orderStructSell]
-    );
-    const orderHashSell = ethers.keccak256(encodedOrderSell);
-    console.log(`📝 Sell Order Hash: ${orderHashSell}\n`);
+    const orderHash = ethers.keccak256(encodedOrder);
+    console.log(`📝 Order Hash: ${orderHash}\n`);
 
-    // Ship liquidity to BOTH orders
-    console.log("═══ 🚢 Shipping Liquidity to Both Orders ═══\n");
+    // Ship liquidity to ONE order
+    console.log("═══ 🚢 Shipping Liquidity to ONE Order ═══\n");
     
-    // Ship to BUY order
-    const shipTxBuy = await aqua.connect(maker).ship(
+    const shipTx = await aqua.connect(maker).ship(
       await router.getAddress(),
-      encodedOrderBuy,
-      [await mETH.getAddress(), await mUSDC.getAddress()],
+      encodedOrder,
+      [await mETH.getAddress(), await mUSDC.getAddress()],  // [base, quote]
       [LIQUIDITY_METH, LIQUIDITY_MUSDC]
     );
-    await shipTxBuy.wait();
-    console.log(`✅ Shipped to BUY order: ${formatBalance(LIQUIDITY_METH)} mETH + ${formatBalance(LIQUIDITY_MUSDC)} mUSDC`);
-    
-    // Ship to SELL order
-    const shipTxSell = await aqua.connect(maker).ship(
-      await router.getAddress(),
-      encodedOrderSell,
-      [await mETH.getAddress(), await mUSDC.getAddress()],
-      [LIQUIDITY_METH, LIQUIDITY_MUSDC]
-    );
-    await shipTxSell.wait();
-    console.log(`✅ Shipped to SELL order: ${formatBalance(LIQUIDITY_METH)} mETH + ${formatBalance(LIQUIDITY_MUSDC)} mUSDC\n`);
+    await shipTx.wait();
+    console.log(`✅ Shipped ${formatBalance(LIQUIDITY_METH)} mETH + ${formatBalance(LIQUIDITY_MUSDC)} mUSDC to ONE order\n`);
 
     // Update price in MockPyth (refresh timestamp)
     console.log("═══ 🔄 Updating MockPyth Price ═══\n");
     await mockPyth.setPrice(ETH_USD_FEED_ID, MOCK_PRICE, MOCK_CONFIDENCE, MOCK_EXPO);
     console.log("✅ MockPyth price updated\n");
 
+    // Get initial LP pool balances
+    const [initialPoolMETH, initialTokensCountMETH] = await aqua.rawBalances(
+      maker.address,
+      await router.getAddress(),
+      orderHash,
+      await mETH.getAddress()
+    );
+    const [initialPoolMUSDC, initialTokensCountMUSDC] = await aqua.rawBalances(
+      maker.address,
+      await router.getAddress(),
+      orderHash,
+      await mUSDC.getAddress()
+    );
+    
+    console.log("💧 Initial LP Pool Balances:");
+    console.log(`  mETH: ${formatBalance(initialPoolMETH)}`);
+    console.log(`  mUSDC: ${formatBalance(initialPoolMUSDC)}`);
+    const initialPoolPrice = Number(initialPoolMUSDC) / Number(initialPoolMETH);
+    console.log(`  Pool Price: $${initialPoolPrice.toFixed(2)} per ETH\n`);
+
     // ========================================================================
-    // TEST 1: Buy 0.3 ETH with USDC (quote → base) - Using Exact Output
+    // TEST 1: Buy 0.3 ETH with USDC (quote → base) - Using ONE order
     // ========================================================================
-    console.log("═══ 🧪 TEST 1: BUY 0.3 ETH with USDC ═══\n");
+    console.log("═══ 🧪 TEST 1: BUY 0.3 ETH with USDC (Using ONE order) ═══\n");
     
     const BUY_AMOUNT_ETH = ether("0.3"); // Want exactly 0.3 ETH
     
@@ -224,10 +199,10 @@ async function main() {
     const mETHBefore1 = await mETH.balanceOf(taker.address);
     const mUSDCBefore1 = await mUSDC.balanceOf(taker.address);
     
-    console.log(`Buying ${formatBalance(BUY_AMOUNT_ETH)} mETH with USDC...`);
+    console.log(`Buying ${formatBalance(BUY_AMOUNT_ETH)} mETH with USDC...\n`);
     
     const buyTx = await router.connect(taker).swap(
-      orderStructBuy,          // Use BUY order (baseIsTokenIn=false)
+      orderStruct,             // Use SAME order - contract handles direction via isExactIn
       await mUSDC.getAddress(), // tokenIn (quote)
       await mETH.getAddress(),  // tokenOut (base)
       BUY_AMOUNT_ETH,          // Exact output amount
@@ -241,13 +216,33 @@ async function main() {
     const mETHChange1 = mETHAfter1 - mETHBefore1;
     const mUSDCChange1 = mUSDCAfter1 - mUSDCBefore1;
     
-    console.log("\n📊 Results:");
+    console.log("\n📊 Taker Balance Changes:");
     console.log(`  mETH: ${mETHChange1 >= 0n ? '+' : ''}${formatBalance(mETHChange1)}`);
     console.log(`  mUSDC: ${mUSDCChange1 >= 0n ? '+' : ''}${formatBalance(mUSDCChange1 < 0n ? -mUSDCChange1 : mUSDCChange1)}`);
     
+    // Get LP pool balances after trade
+    const [poolMETH1, tokensCountMETH1] = await aqua.rawBalances(
+      maker.address,
+      await router.getAddress(),
+      orderHash,
+      await mETH.getAddress()
+    );
+    const [poolMUSDC1, tokensCountMUSDC1] = await aqua.rawBalances(
+      maker.address,
+      await router.getAddress(),
+      orderHash,
+      await mUSDC.getAddress()
+    );
+    
+    console.log("\n💧 LP Pool Balances After TEST 1:");
+    console.log(`  mETH: ${formatBalance(poolMETH1)}`);
+    console.log(`  mUSDC: ${formatBalance(poolMUSDC1)}`);
+    const poolPrice1 = Number(poolMUSDC1) / Number(poolMETH1);
+    console.log(`  Pool Price: $${poolPrice1.toFixed(2)} per ETH`);
+    
     if (mETHChange1 > 0n && mUSDCChange1 < 0n) {
       const price1 = Number(-mUSDCChange1) / Number(mETHChange1);
-      console.log(`  Price: $${price1.toFixed(2)} per ETH`);
+      console.log(`\n  Taker Price Paid: $${price1.toFixed(2)} per ETH`);
       console.log(`  ✅ TEST 1 PASSED - Bought ETH with USDC\n`);
     } else {
       console.log(`  ❌ TEST 1 FAILED - Unexpected balance changes\n`);
@@ -255,9 +250,9 @@ async function main() {
     }
 
     // ========================================================================
-    // TEST 2: Sell 0.5 ETH for USDC (base → quote)
+    // TEST 2: Sell 0.5 ETH for USDC (base → quote) - Using SAME order
     // ========================================================================
-    console.log("═══ 🧪 TEST 2: SELL 0.5 ETH for USDC ═══\n");
+    console.log("═══ 🧪 TEST 2: SELL 0.5 ETH for USDC (Using SAME order) ═══\n");
     
     const SELL_AMOUNT = ether("0.5");
     
@@ -272,10 +267,11 @@ async function main() {
     const mUSDCBefore2 = await mUSDC.balanceOf(taker.address);
     
     console.log(`Selling ${formatBalance(SELL_AMOUNT)} mETH...`);
+    console.log(`✅ This should work - selling ETH matches baseIsTokenIn=true\n`);
     
     const sellTx = await router.connect(taker).swap(
-      orderStructSell,         // Use SELL order (baseIsTokenIn=true)
-      await mETH.getAddress(),  // tokenIn (base)
+      orderStruct,              // Use SAME order (baseIsTokenIn=true)
+      await mETH.getAddress(),  // tokenIn (base) - matches order direction
       await mUSDC.getAddress(), // tokenOut (quote)
       SELL_AMOUNT,
       takerTraitsSell
@@ -288,13 +284,33 @@ async function main() {
     const mETHChange2 = mETHAfter2 - mETHBefore2;
     const mUSDCChange2 = mUSDCAfter2 - mUSDCBefore2;
     
-    console.log("\n📊 Results:");
+    console.log("\n📊 Taker Balance Changes:");
     console.log(`  mETH: ${mETHChange2 >= 0n ? '+' : ''}${formatBalance(mETHChange2 < 0n ? -mETHChange2 : mETHChange2)}`);
     console.log(`  mUSDC: ${mUSDCChange2 >= 0n ? '+' : ''}${formatBalance(mUSDCChange2)}`);
     
+    // Get LP pool balances after trade
+    const [poolMETH2, tokensCountMETH2] = await aqua.rawBalances(
+      maker.address,
+      await router.getAddress(),
+      orderHash,
+      await mETH.getAddress()
+    );
+    const [poolMUSDC2, tokensCountMUSDC2] = await aqua.rawBalances(
+      maker.address,
+      await router.getAddress(),
+      orderHash,
+      await mUSDC.getAddress()
+    );
+    
+    console.log("\n💧 LP Pool Balances After TEST 2:");
+    console.log(`  mETH: ${formatBalance(poolMETH2)}`);
+    console.log(`  mUSDC: ${formatBalance(poolMUSDC2)}`);
+    const poolPrice2 = Number(poolMUSDC2) / Number(poolMETH2);
+    console.log(`  Pool Price: $${poolPrice2.toFixed(2)} per ETH`);
+    
     if (mETHChange2 < 0n && mUSDCChange2 > 0n) {
       const price2 = Number(mUSDCChange2) / Number(-mETHChange2);
-      console.log(`  Price: $${price2.toFixed(2)} per ETH`);
+      console.log(`\n  Taker Price Paid: $${price2.toFixed(2)} per ETH`);
       console.log(`  ✅ TEST 2 PASSED - Sold ETH for USDC\n`);
     } else {
       console.log(`  ❌ TEST 2 FAILED - Unexpected balance changes\n`);
@@ -306,11 +322,11 @@ async function main() {
     console.log("║                                                            ║");
     console.log("║         ✅ ALL TESTS PASSED! ✅                            ║");
     console.log("║                                                            ║");
-    console.log("║  Both directions work correctly:                          ║");
+    console.log("║  ONE order works for BOTH directions! 🎉                  ║");
     console.log("║  ✓ Buy ETH with USDC (quote → base)                       ║");
     console.log("║  ✓ Sell ETH for USDC (base → quote)                       ║");
     console.log("║                                                            ║");
-    console.log("║  The contract fix is working! 🎉                          ║");
+    console.log("║  No need for two separate orders!                         ║");
     console.log("║                                                            ║");
     console.log("╚════════════════════════════════════════════════════════════╝\n");
 
